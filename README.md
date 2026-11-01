@@ -68,7 +68,8 @@ not byte-for-byte reproducible, so a rebuilt exe will have a different hash.
 
 Released exes (on Nexus Mods and GitHub Releases), SHA-256:
 
-- 1.0.1: `c8ad87e76ee8fc56083d0b2fe18d52549bf1deebbc278180192b9bf6afe88712`
+- 1.1.0 (for Mod Settings Extended 1.2.0): `960c94d3cc1c64f34c8f944c14776cbfb275f80ce4e11d12f157f5fea7dd5460`
+- 1.0.1: `c8ad87e76ee8fc56083d0b2fe18d52549bf1deebbc278180192b9bf6afe88712` (for Mod Settings Extended 1.1.0)
 
 ## License
 
