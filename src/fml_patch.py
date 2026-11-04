@@ -104,6 +104,25 @@ KEY_F2, KEY_ESC, PAD_B = 113, 27, 137   # KeyCode.F2 / KeyCode.ESCAPE / KeyCode.
 REN_ACTION = FAV_ACTION + 1  # input feedback id of the "Rename" prompt (keyboard only)
 REN_IDX = LANG_IDX + 1       # fmlNames indexes of "Rename" and "Original name" (newer scripts only; English otherwise)
 ORIG_IDX = REN_IDX + 1
+FTOP_IDX = ORIG_IDX + 1      # fmlNames index of "1": favorites stay in their categories, on top (else a Favorites category)
+REN_CAT_IDX = FTOP_IDX + 1    # fmlNames indexes of the pop-up's titles and its Reset name button
+REN_MOD_IDX = FTOP_IDX + 2
+REN_RST_IDX = FTOP_IDX + 3
+CREN_IDX = FTOP_IDX + 4       # fmlNames index of nine "0"/"1": category i has a name of the user's
+FTOPL_IDX = CREN_IDX + 1      # fmlNames index of "1": in A to Z favorites stay in their letter sections, on top (else a Favorites section)
+FTOPN_IDX = FTOPL_IDX + 1     # fmlNames index of "1": Newest first has favorites on top (else favorites sort like any row)
+FTOPO_IDX = FTOPL_IDX + 2     # the same for Recently opened
+ADD_IDX = FTOPL_IDX + 3       # fmlNames indexes of "Add Category" and "Delete Category"
+DEL_IDX = FTOPL_IDX + 4
+CCNT_IDX = FTOPL_IDX + 5      # fmlNames index of how many categories the user added; their names follow it
+MAX_CUSTOM = 30               # the script takes no more than this; the row goes away then
+POP_CLASS = 'ModVerificationPopupRef'   # this SWF's copy of the game's regular dialog art: rename shows in it
+POP_BTN = 'InputFeedbackButtonRef'
+POP_X, POP_Y, POP_H = 634, 445, 190     # the dialog on the 1920 x 1080 stage (652 wide), and its height
+POP_BOX_Y, POP_BOX_H, POP_GAP = 85, 36, 30
+POP_STRIP_Y, POP_BTN_Y = POP_H - 25, POP_H   # as the game's dialogs: the strip across the bottom edge, buttons on its middle (their y 0 is their middle)
+POP_BTN_X, POP_STRIP_PAD = 318, 36           # the row's center, less the buttons' 8 of left margin; the strip's width past the row
+POP_MS = 400                  # a click this soon after the pop-up opened or closed is the same click: ignored
 REN_MAX = 40                 # a new name has at most this many characters
 REN_SHOWN = 20               # characters of the name being typed shown in the title (the last ones, after "...")
 ORIG_SHOWN = 60              # characters of the original name shown in the title (the first ones, then "...")
@@ -258,6 +277,20 @@ def patch_abc(abc):
     alphaP, parentP, verP = pubn('alpha'), pubn('parent'), pubn('txtVersion')
     s_ver = string('txtVersion')
     m_bar, m_bdown, m_bmove, m_bup = nm('fmlBar'), nm('fmlBarDown'), nm('fmlBarMove'), nm('fmlBarUp')
+    m_hclick, m_crstart, m_crend = nm('fmlHdrClick'), nm('fmlCatRenStart'), nm('fmlCatRenEnd')
+    m_pop, m_phide, m_pput, m_cshow, m_rall, m_rcan = (nm('fmlPop'), nm('fmlPopHide'), nm('fmlPopPut'), nm('fmlCatShow'),
+                                                       nm('fmlRstAny'), nm('fmlRstCan'))
+    m_rcn, m_rstn, m_pinit, m_pbtn, m_play, m_prdy, m_pok, m_prs, m_pes = (
+        nm('fmlRenCan'), nm('fmlRenRstNow'), nm('fmlPopInit'), nm('fmlPopBtn'), nm('fmlPopLay'), nm('fmlPopReady'),
+        nm('fmlPopOk'), nm('fmlPopRst'), nm('fmlPopEsc'))
+    m_fnext = nm('fmlFavNext')
+    m_cdall, fmlDelS, fmlAddWas = nm('fmlCatDelAll'), pubn('fmlDelS'), nm('fmlAddWas')
+    m_ncat, m_addon, m_hhov, m_cdel = nm('fmlNumCats'), nm('fmlAddOn'), nm('fmlHdrHover'), nm('fmlCatDel')
+    fmlAddRP, fmlHovR = pubn('fmlAddR'), nm('fmlHovR')
+    s_addr, s_addid, s_fmlcat = string('fmlAddR'), string('fmlAddCat'), string('fmlCat')
+    s_ar_id, s_ar_lab, s_ar_typ, s_ar_kind = string('id'), string('label'), string('type'), string('fmlKind')
+    s_hline, s_ln_nbsp, s_ln_un = string('-\x01-'), string('\u00a0'), string('unavailable')   # fmlHdr of the line above Back
+    s_addcat, s_delcat, s_hv1 = string('Add Category'), string('Delete Category'), string('<font color="#FFFFFF">  -  ')
     m_wheel, m_follow = nm('fmlWheel'), nm('fmlFollowSel')
     spriteC = c.used_mn('Sprite', ('constructprop',))
     gfx = pubn('graphics')
@@ -266,6 +299,7 @@ def patch_abc(abc):
     codeP, yval = pubn('code'), pubn('yvalue')
     getTimer = c.used_mn('getTimer', ('callproperty',))
     s_mdown, s_mmove, s_mup, s_wheel = string('mouseDown'), string('mouseMove'), string('mouseUp'), string('mouseWheel')
+    s_click = string('click')
     i_white = c.integer(0xFFFFFF)
     d_hit, d_track, d_thumb = c.double(0.01), c.double(0.2), c.double(0.75)
     d_dead2, d_speed = c.double(STICK_DEAD * STICK_DEAD), c.double(STICK_SPEED / 1000.0)
@@ -344,7 +378,7 @@ def patch_abc(abc):
         # counting only entries that are not letter or spacer rows (on Back the list already has them; a renderer
         # added then showed its "TextField" placeholder)
         L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'PH'),
-        L('getlocal', 9), L('pushbyte', 3), L('multiply'), L('pushbyte', 2), L('add'), L('convert_i'),
+        L('getlocal', 9), L('pushbyte', 3), L('multiply'), L('pushbyte', 2 + 2 * MAX_CUSTOM), L('add'), L('convert_i'),
         L('setlocal', 6),
         ('PH', 'getlocal0'), L('getproperty', mcList), L('getproperty', numR), L('convert_i'), L('setlocal2'),
         L('getlocal2'), L('pushbyte', 1), L('iflt', 'END'),
@@ -813,6 +847,8 @@ def patch_abc(abc):
         L('getlocal0'), L('getproperty', stageP), L('iffalse', 'HAVE'),
         *listen(stage, s_mmove, m_bmove),
         *listen(stage, s_mup, m_bup),
+        *listen(stage, s_click, m_hclick),
+        *listen(stage, s_mmove, m_hhov),
         ('HAVE', 'getlocal0'), L('getproperty', fmlCnt), L('pushbyte', VANILLA_ROWS), L('ifngt', 'OFF'),
         L('getlocal0'), L('getproperty', fmlPer), L('getlocal0'), L('getproperty', fmlVis), L('ifgt', 'ON'),
         ('OFF', 'getlocal1'), L('pushfalse'), L('setproperty', vis),
@@ -1035,7 +1071,34 @@ def patch_abc(abc):
     # "id=name" to tell the script ("id=" = original name again); fmlRnPrompt = the Rename prompt's label (null: not shown). The
     # script sets fmlOrig (the original name) on each renamed Mods row; the menu keeps it up to date ("" = not renamed)
     fmlRen, fmlRenTxt, fmlPName, fmlRnPr = nm('fmlRen'), nm('fmlRenTxt'), nm('fmlPendName'), nm('fmlRnPrompt')
-    for f, t in ((fmlRen, 0), (fmlRenTxt, 0), (fmlPName, 0), (fmlRnPr, 0)):
+    # a category being renamed: fmlRen = {fmlRenCat: i}; fmlPendCatName = "i=name" to tell the script ("i=" = its own name)
+    fmlPCatN, fmlRenCatP, s_rencat, s_catname = nm('fmlPendCatName'), pubn('fmlRenCat'), string('fmlRenCat'), string('catname')
+    fmlHCatP, s_hcat, stageXP, stageYP, htpM = pubn('fmlHCat'), string('fmlHCat'), pubn('stageX'), pubn('stageY'), pubn('hitTestPoint')
+    fmlFTop, fmlPopS = nm('fmlFavTop'), nm('fmlPopup')
+    s_one, s_popc, s_popt, s_popl = string('1'), string(POP_CLASS), string('txtTitle'), string('txtMessage')
+    s_popbg, s_popst, s_pbc = string('mcBackground'), string('mcInputBackground'), string(POP_BTN)
+    s_pbok, s_pbrs, s_pbes = string('fmlBtnOk'), string('fmlBtnRst'), string('fmlBtnEsc')
+    s_laok, s_laes = string('[[panel_common_accept]]'), string('[[panel_common_cancel]]')
+    s_renct, s_renmd, s_renrs = string('Rename Category'), string('Rename Mod'), string('Reset name')
+    s_pophide = [string(x) for x in ('txtReason', 'txtAction', 'mcScrollbar', 'mcModList', 'mcInpuFeedback')]
+    fmlRenAt = nm('fmlRenAt')
+    M.add_slot(c, ci, fmlRenAt, 0, 0, 0)
+    M.add_slot(c, ci, fmlHovR, 0, 0, 0)
+    M.add_slot(c, ci, fmlAddWas, t_bool, 0, 0)
+    vnow, remel, inEv, inInput, hInput = (c.used_mn('validateNow', ('callpropvoid',)), c.used_mn('removeEventListener', ('callpropvoid',)),
+                                          c.used_mn('InputEvent', ('getlex',)), c.used_mn('INPUT', ('getproperty',)),
+                                          c.used_mn('handleInput', ('getproperty',), 'pkg:::handleInput'))
+    navC, navA, navB, navY = (c.used_mn('NavigationCode', ('getlex',)), c.used_mn('GAMEPAD_A', ('getproperty',)),
+                              c.used_mn('GAMEPAD_B', ('getproperty',)), c.used_mn('GAMEPAD_Y', ('getproperty',)))
+    sdfs, occW, clickP, labelP, btnEv, pressP = (c.used_mn('setDataFromStage', ('callpropvoid',)), c.used_mn('getOccupiedWidth', ('callproperty',)),
+                                                 c.used_mn('clickable', ('setproperty',)), c.used_mn('label', ('setproperty',)),
+                                                 c.used_mn('ButtonEvent', ('getlex',)), c.used_mn('PRESS', ('getproperty',)))
+    nameP, upperM = pubn('name'), pubn('toUpperCase')
+    borderP, borderC, bgP, bgC = pubn('border'), pubn('borderColor'), pubn('background'), pubn('backgroundColor')
+    fmlFTopL, fmlFTopN, fmlFTopO = nm('fmlFavTopL'), nm('fmlFavTopN'), nm('fmlFavTopO')
+    for f, t in ((fmlFTop, t_bool), (fmlFTopL, t_bool), (fmlFTopN, t_bool), (fmlFTopO, t_bool), (fmlPopS, 0)):
+        M.add_slot(c, ci, f, t, 0, 0)
+    for f, t in ((fmlRen, 0), (fmlRenTxt, 0), (fmlPName, 0), (fmlRnPr, 0), (fmlPCatN, 0)):
         M.add_slot(c, ci, f, t, 0, 0)
     fmlOrigP, s_fmlorig = pubn('fmlOrig'), string('fmlOrig')
     m_selrow, m_rstart, m_rkey, m_rend, m_rrst, m_rpr = (nm('fmlSelRow'), nm('fmlRenStart'), nm('fmlRenKey'),
@@ -1057,6 +1120,7 @@ def patch_abc(abc):
     strC, fccM = c.used_mn('String', ('getlex',)), c.used_mn('fromCharCode', ('callproperty',))
     imC, instM = c.used_mn('InputManager', ('getlex',)), c.used_mn('getInstance', ('callproperty',))
     isPadM = c.used_mn('isGamepad', ('callproperty',))
+    isMouseM = c.used_mn('isMouse', ('callproperty',))
     # the string on the stack with & < > as entities (it goes into htmlText)
     esc = lambda: [L('pushstring', s_amp), L('callproperty', splitM, 1), L('pushstring', s_eamp),
                    L('callproperty', joinM, 1),
@@ -1144,7 +1208,9 @@ def patch_abc(abc):
         L('pushnull'), L('setlocal', 9),
         L('getlocal0'), L('getproperty', fmlMods), L('iftrue', 'GO'),
         L('getlocal1'), L('returnvalue'),
-        ('GO', 'pushnull'), L('setlocal', 5),
+        # the list changes now: the end of the click that did it must not count as a click on what is under the mouse now
+        ('GO', 'getlocal0'), L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'), L('initproperty', fmlRenAt),
+        L('pushnull'), L('setlocal', 5),
         L('pushbyte', 0), L('setlocal3'),
         ('B0', 'label'), L('getlocal3'), L('getlocal1'), L('getproperty', length), L('ifnlt', 'B9'),
         L('getlocal1'), L('getlocal3'), L('getproperty', late), L('coerce_a'), L('setlocal', 4),
@@ -1167,6 +1233,7 @@ def patch_abc(abc):
         *isBack(4, 'A1', 'ifeq'),
         # never a letter header (a list of ours that came back without being fmlLastDP)
         L('getlocal', 4), L('getproperty', fmlHdrP), L('iftrue', 'A1'),
+        L('getlocal', 4), L('getproperty', fmlAddRP), L('iftrue', 'A1'),
         L('getlocal0'), L('getproperty', fmlAll), L('getlocal', 4), L('callpropvoid', pushM, 1),
         L('getlocal', 6), L('getlocal', 4), L('getproperty', idP), L('convert_s'), L('add'), L('pushstring', s_semi),
         L('add'), L('coerce_a'), L('setlocal', 6),
@@ -1196,13 +1263,19 @@ def patch_abc(abc):
         ('F1', 'inclocal_i', 3), L('jump', 'F0'),
         # A to Z / By category with headers: a header row before each group (after the filter, so a search keeps
         # only the letters / categories that still have entries; Back is added after this and gets none)
-        ('F9', 'getlocal0'), L('getlocal2'), L('callproperty', m_hdrs, 1), L('coerce_a'), L('dup'),
+        ('F9', 'pushfalse'), L('setlocal', 10),
+        L('getlocal0'), L('getlocal2'), L('callproperty', m_hdrs, 1), L('coerce_a'), L('dup'),
         L('iffalse', 'HZ'),
-        L('setlocal2'), L('jump', 'HY'),
+        L('setlocal2'), L('pushtrue'), L('setlocal', 10), L('jump', 'HY'),
         ('HZ', 'pop'),
         # no header in a column's last row, no mod on a later column's top: spacer rows (fmlGaps; Back, added below,
         # counts as a row)
-        ('HY', 'getlocal0'), L('getlocal2'), L('getlocal', 5), L('convert_b'), L('convert_i'),
+        ('HY', 'getlocal', 5), L('iftrue', 'HY1'),
+        L('pushfalse'), L('setlocal', 10),
+        ('HY1', 'getlocal0'), L('getlocal0'), L('callproperty', m_addon, 0), L('convert_b'), L('initproperty', fmlAddWas),
+        L('getlocal0'), L('getlocal2'), L('getlocal', 5), L('convert_b'), L('convert_i'),
+        L('getlocal0'), L('callproperty', m_addon, 0), L('convert_b'), L('convert_i'), L('add'),
+        L('getlocal', 10), L('convert_b'), L('convert_i'), L('add'), L('convert_i'),
         L('callpropvoid', m_gaps, 2),
         # back from an entry's page (or headers toggled): select that entry where it is now, in the final rows
         L('getlocal', 9), L('iffalse', 'F95'),
@@ -1214,14 +1287,33 @@ def patch_abc(abc):
         L('getlocal0'), L('getlocal3'), L('initproperty', fmlSelOut), L('jump', 'F95'),
         ('G1', 'inclocal_i', 3), L('jump', 'G0'),
         ('F95', 'getlocal', 5), L('iffalse', 'RET'),
-        L('getlocal2'), L('getlocal', 5), L('callpropvoid', pushM, 1),
+        L('getlocal', 10), L('iffalse', 'NOLN'),
+        L('getlocal2'),
+        L('pushstring', s_ar_id), L('pushstring', s_empty),
+        L('pushstring', s_ar_lab), L('pushstring', s_ln_nbsp),
+        L('pushstring', s_ar_typ), L('pushbyte', HDR_TYPE),
+        L('pushstring', s_ln_un), L('pushtrue'),
+        L('pushstring', s_fmlhdr), L('pushstring', s_hline),
+        L('newobject', 5), L('callpropvoid', pushM, 1),
+        ('NOLN', 'getlocal2'), L('getlocal', 5), L('callpropvoid', pushM, 1),
         # the id to select is Back's (Back was selected when fmlRegapNow showed the list again): Back, the last row
         L('getlocal', 9), L('iffalse', 'RET'),
         L('getlocal0'), L('getproperty', fmlSelOut), L('pushbyte', 0), L('ifge', 'RET'),
         L('getlocal', 5), L('getproperty', idP), L('convert_s'), L('getlocal', 9), L('ifne', 'RET'),
         L('getlocal0'), L('getlocal2'), L('getproperty', length), L('decrement_i'), L('initproperty', fmlSelOut),
+        # Add Category, under Back (fmlCat and fmlKind -1: Favorite, Rename and Change category leave it alone)
+        ('RET', 'getlocal', 5), L('iffalse', 'RT2'),
+        L('getlocal0'), L('callproperty', m_addon, 0), L('iffalse', 'RT2'),
+        L('getlocal2'),
+        L('pushstring', s_ar_id), L('pushstring', s_addid),
+        L('pushstring', s_ar_lab), *nlabel(ADD_IDX, s_addcat, 'AL'),
+        L('pushstring', s_ar_typ), L('pushbyte', 2),
+        L('pushstring', s_addr), L('pushtrue'),
+        L('pushstring', s_fmlcat), L('pushtrue'),
+        L('pushstring', s_ar_kind), L('pushbyte', 255),
+        L('newobject', 6), L('callpropvoid', pushM, 1),
         # the list's dataProvider setter takes an IDataProvider: a plain Array there is a TypeError
-        ('RET', 'findpropstrict', dpC), L('getlocal2'), L('constructprop', dpC, 1), L('coerce_a'), L('setlocal2'),
+        ('RT2', 'findpropstrict', dpC), L('getlocal2'), L('constructprop', dpC, 1), L('coerce_a'), L('setlocal2'),
         L('getlocal0'), L('getlocal2'), L('initproperty', fmlLastDP),
         L('getlocal2'), L('returnvalue'),
         # the same list again (Back from an entry's page): under Recently opened, sorted again with the entry just
@@ -1379,7 +1471,24 @@ def patch_abc(abc):
 
     # fmlLess(a, b):Boolean - a sorts ahead of b.   3 x, 4 y, 5 sort, 6 stamp map
     less = [
-        L('getlocal1'), L('getproperty', fmlFavP), L('convert_b'), L('getlocal2'), L('getproperty', fmlFavP),
+        L('getlocal0'), L('getproperty', fmlFTopL), L('iffalse', 'FL'),
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', 0), L('ifne', 'FL'),
+        L('getlocal0'), L('getlocal1'), L('callpropvoid', m_coll, 1),
+        L('getlocal0'), L('getlocal2'), L('callpropvoid', m_coll, 1),
+        L('getlocal1'), L('getproperty', fmlSHP), L('convert_s'), L('getlocal2'), L('getproperty', fmlSHP), L('convert_s'),
+        L('ifne', 'NAME'),
+        ('FL', 'getlocal0'), L('getproperty', fmlFTop), L('iffalse', 'F0'),
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'F0'),
+        L('getlocal0'), L('getlocal1'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal3'),
+        L('getlocal0'), L('getlocal2'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
+        L('getlocal3'), L('getlocal', 4), L('ifeq', 'F0'),
+        L('getlocal3'), L('getlocal', 4), L('lessthan'), L('returnvalue'),
+        ('F0', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', 1), L('ifne', 'F0O'),
+        L('getlocal0'), L('getproperty', fmlFTopN), L('iffalse', 'FQ'),
+        L('jump', 'F0A'),
+        ('F0O', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', 2), L('ifne', 'F0A'),
+        L('getlocal0'), L('getproperty', fmlFTopO), L('iffalse', 'FQ'),
+        ('F0A', 'getlocal1'), L('getproperty', fmlFavP), L('convert_b'), L('getlocal2'), L('getproperty', fmlFavP),
         L('convert_b'), L('ifeq', 'FQ'),
         L('getlocal1'), L('getproperty', fmlFavP), L('convert_b'), L('returnvalue'),
         ('FQ', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('setlocal', 5),
@@ -1483,8 +1592,45 @@ def patch_abc(abc):
         L('getlocal0'), L('pushfalse'), L('initproperty', fmlFvPr),
         L('getlocal0'), L('pushnull'), L('initproperty', fmlRnPr),
         ('NS', 'getlocal0'), L('getlocal3'), L('initproperty', fmlNames),
+        L('pushfalse'), L('setlocal', 7),
+        L('getlocal3'), L('getproperty', length), L('pushbyte', FTOP_IDX + 1), L('iflt', 'FT1'),
+        L('getlocal3'), L('pushbyte', FTOP_IDX), L('getproperty', late), L('convert_s'), L('pushstring', s_one),
+        L('ifne', 'FT1'),
+        L('pushtrue'), L('setlocal', 7),
+        ('FT1', 'getlocal', 7), L('getlocal0'), L('getproperty', fmlFTop), L('ifeq', 'NN'),
+        L('getlocal0'), L('getlocal', 7), L('convert_b'), L('initproperty', fmlFTop),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlLastDP),
         # the list was shown before the store arrived (A to Z, headers on): show it again if that differs
-        ('NN', 'getlocal0'), L('getproperty', fmlSort), L('pushbyte', 1), L('ifge', 'RFR'),
+        ('NN', 'nop'),
+        L('pushfalse'), L('setlocal', 7),
+        L('getlocal3'), L('getproperty', length), L('pushbyte', FTOPN_IDX + 1), L('iflt', 'FN1'),
+        L('getlocal3'), L('pushbyte', FTOPN_IDX), L('getproperty', late), L('convert_s'), L('pushstring', s_one),
+        L('ifne', 'FN1'),
+        L('pushtrue'), L('setlocal', 7),
+        ('FN1', 'getlocal', 7), L('getlocal0'), L('getproperty', fmlFTopN), L('ifeq', 'FNQ'),
+        L('getlocal0'), L('getlocal', 7), L('convert_b'), L('initproperty', fmlFTopN),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlLastDP),
+        ('FNQ', 'nop'),
+        L('pushfalse'), L('setlocal', 7),
+        L('getlocal3'), L('getproperty', length), L('pushbyte', FTOPO_IDX + 1), L('iflt', 'FO1'),
+        L('getlocal3'), L('pushbyte', FTOPO_IDX), L('getproperty', late), L('convert_s'), L('pushstring', s_one),
+        L('ifne', 'FO1'),
+        L('pushtrue'), L('setlocal', 7),
+        ('FO1', 'getlocal', 7), L('getlocal0'), L('getproperty', fmlFTopO), L('ifeq', 'FOQ'),
+        L('getlocal0'), L('getlocal', 7), L('convert_b'), L('initproperty', fmlFTopO),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlLastDP),
+        ('FOQ', 'nop'),
+        L('pushfalse'), L('setlocal', 7),
+        L('getlocal3'), L('getproperty', length), L('pushbyte', FTOPL_IDX + 1), L('iflt', 'FL1'),
+        L('getlocal3'), L('pushbyte', FTOPL_IDX), L('getproperty', late), L('convert_s'), L('pushstring', s_one),
+        L('ifne', 'FL1'),
+        L('pushtrue'), L('setlocal', 7),
+        ('FL1', 'getlocal', 7), L('getlocal0'), L('getproperty', fmlFTopL), L('ifeq', 'FLQ'),
+        L('getlocal0'), L('getlocal', 7), L('convert_b'), L('initproperty', fmlFTopL),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlLastDP),
+        L('jump', 'RFR'),
+        ('FLQ', 'getlocal0'), L('getproperty', fmlLastDP), L('iffalse', 'RFR'),
+        L('getlocal0'), L('getproperty', fmlSort), L('pushbyte', 1), L('ifge', 'RFR'),
         L('getlocal0'), L('getproperty', fmlHdrOff), L('getlocal', 8), L('ifeq', 'END'),
         ('RFR', 'getlocal0'), L('callpropvoid', m_refresh, 0),
         ('END', 'returnvoid'),
@@ -1627,13 +1773,22 @@ def patch_abc(abc):
         L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'RCX'),
         L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('iflt', 'RC'),
         ('RCX', 'getlocal0'), L('pushnull'), L('initproperty', fmlRen),
-        ('RC', 'nop'),
+        ('RC', 'getlocal0'), L('callpropvoid', m_pop, 0),
         # fmlLayout found the spacers placed for other columns: the list again (Mods list with the focus only; else
         # it stays pending)
-        L('getlocal0'), L('getproperty', fmlRegap), L('iffalse', 'RG'),
-        L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'RG'),
-        L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'RG'),
+        L('getlocal0'), L('getproperty', fmlRegap), L('iffalse', 'RG0'),
+        L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'RG0'),
+        L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'RG0'),
         L('getlocal0'), L('callpropvoid', m_regap, 0),
+        ('RG0', 'getlocal0'), L('getproperty', fmlMods), L('iffalse', 'RG'),
+        L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'RG'),
+        L('getlocal0'), L('getproperty', fmlRen), L('iftrue', 'RG'),
+        L('getlocal0'), L('callproperty', m_addon, 0), L('convert_b'), L('getlocal0'), L('getproperty', fmlAddWas), L('ifeq', 'RG'),
+        L('getlocal0'), L('callproperty', m_selrow, 0), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'RGR'),
+        L('getlocal0'), L('getlocal', 4), L('getproperty', idP), L('convert_s'), L('initproperty', fmlKeepId),
+        ('RGR', 'getlocal0'), L('callpropvoid', m_refresh, 0),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlKeepId),
         ('RG', 'nop'),
         # an entry was opened: stamp it in fmlOpen now (4 = the map)
         L('getlocal0'), L('getproperty', fmlPOpen), L('iffalse', 'Q0'),
@@ -1648,7 +1803,7 @@ def patch_abc(abc):
         ('Q0', 'nop'),
         *send(fmlPSeen, s_seen, 'Q1'), *send(fmlPOpen, s_open, 'Q2'), *send(fmlPSort, s_sort, 'Q3'),
         *send(fmlPCat, s_cat, 'Q4'), *send(fmlPRst, s_crst, 'Q5'),
-        *send(fmlPFav, s_fav, 'Q6'), *send(fmlPName, s_name, 'Q7'),
+        *send(fmlPFav, s_fav, 'Q6'), *send(fmlPName, s_name, 'Q7'), *send(fmlPCatN, s_catname, 'Q8'),
         L('getlocal0'), L('getproperty', parentP), L('coerce_a'), L('setlocal1'),
         L('getlocal1'), L('iffalse', 'TITLE'),
         L('pushstring', s_ifm), L('getlocal1'), L('in'), L('iffalse', 'TITLE'),
@@ -1698,7 +1853,16 @@ def patch_abc(abc):
         ('CP', 'getlocal0'), L('getproperty', fmlMods), L('iffalse', 'COFF'),
         L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'COFF'),
         L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'COFF'),
-        L('getlocal0'), L('getproperty', fmlCPrompt), L('iftrue', 'RP'),
+        # no Change category on a favorite in the Favorites category
+        L('getlocal0'), L('callproperty', m_cshow, 0), L('iftrue', 'CS'),
+        L('getlocal0'), L('getproperty', fmlCPrompt), L('iffalse', 'RP'),
+        L('getlocal1'), L('pushshort', CAT_ACTION), L('pushtrue'), L('callpropvoid', removeB, 2),
+        L('getlocal0'), L('pushfalse'), L('initproperty', fmlCPrompt),
+        L('jump', 'RP'),
+        ('CS', 'getlocal0'), L('getproperty', fmlCPrompt), L('iftrue', 'RP'),
+        # Reset goes up again after it, so the two keep their order
+        L('getlocal1'), L('pushshort', RST_ACTION), L('pushtrue'), L('callpropvoid', removeB, 2),
+        L('getlocal0'), L('pushfalse'), L('initproperty', fmlRPrompt),
         L('getlocal1'), L('pushshort', CAT_ACTION), L('pushtrue'), L('callpropvoid', removeB, 2),
         L('getlocal1'), L('pushshort', CAT_ACTION), L('pushstring', s_x), L('pushbyte', KEY_INSERT),
         L('pushstring', s_catp),
@@ -1712,7 +1876,8 @@ def patch_abc(abc):
         # "Y / Home Reset categories" after it; armed (fmlCatReset): the script's armed label ("Press again to reset";
         # a script without one: that in English, a translated label + "?")
         # until RESET_MS have passed. Put up again whenever the armed state differs from the label shown
-        ('RP', 'getlocal0'), L('getproperty', fmlRArmT), L('pushbyte', 0), L('ifngt', 'RA'),
+        ('RP', 'getlocal0'), L('callproperty', m_rall, 0), L('iffalse', 'ROFF'),
+        L('getlocal0'), L('getproperty', fmlRArmT), L('pushbyte', 0), L('ifngt', 'RA'),
         L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('getlocal0'), L('getproperty', fmlRArmT),
         L('subtract'), L('pushshort', RESET_MS), L('ifngt', 'RA'),
         L('getlocal0'), L('pushbyte', 0), L('initproperty', fmlRArmT),
@@ -1941,11 +2106,16 @@ def patch_abc(abc):
         L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'LTR'),
         L('getlocal0'), L('getlocal0'), L('getlocal', 4), L('callproperty', m_kind, 1), L('callproperty', m_cname, 1),
         L('convert_s'), L('coerce_a'), L('setlocal', 6),
+        L('getlocal0'), L('getlocal', 4), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 7),
+        L('getlocal0'), L('getproperty', fmlFTop), L('iftrue', 'LU'),
         L('jump', 'LT'),
         ('LTR', 'getlocal0'), L('getlocal', 4), L('callpropvoid', m_coll, 1),
         L('getlocal', 4), L('getproperty', fmlSHP), L('convert_s'), L('coerce_a'), L('setlocal', 6),
+        L('pushbyte', 255), L('convert_i'), L('setlocal', 7),
+        L('getlocal0'), L('getproperty', fmlFTopL), L('iftrue', 'LU'),
         ('LT', 'getlocal', 4), L('getproperty', fmlFavP), L('convert_b'), L('iffalse', 'LU'),
         *nlabel(FAVS_IDX, s_favs, 'LV'), L('coerce_a'), L('setlocal', 6),
+        L('pushbyte', 255), L('convert_i'), L('setlocal', 7),
         ('LU', 'getlocal', 6), L('getlocal', 5), L('ifeq', 'L1'),
         L('getlocal', 6), L('setlocal', 5),
         L('getlocal', 6), L('pushstring', s_empty), L('ifeq', 'L1'),
@@ -1955,10 +2125,35 @@ def patch_abc(abc):
         L('pushstring', s_typek), L('pushbyte', HDR_TYPE),
         L('pushstring', s_unav), L('pushtrue'),
         L('pushstring', s_fmlhdr), L('getlocal', 6),
-        L('newobject', 5), L('callpropvoid', pushM, 1),
+        L('pushstring', s_hcat), L('getlocal', 7),
+        L('newobject', 6), L('callpropvoid', pushM, 1),
         ('L1', 'getlocal2'), L('getlocal', 4), L('callpropvoid', pushM, 1),
         L('inclocal_i', 3), L('jump', 'L0'),
-        ('L9', 'getlocal2'), L('returnvalue'),
+        ('L9', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'RET'),
+        L('getlocal0'), L('getproperty', fmlSearch), L('convert_s'), L('pushstring', s_empty), L('ifne', 'RET'),
+        L('pushbyte', NUM_CATS), L('setlocal', 7),
+        ('E0', 'label'),
+        L('getlocal', 7), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifnlt', 'RET'),
+        L('pushbyte', 0), L('setlocal3'),
+        ('E1', 'label'),
+        L('getlocal3'), L('getlocal2'), L('getproperty', length), L('ifnlt', 'EP'),
+        L('getlocal2'), L('getlocal3'), L('getproperty', late), L('getproperty', fmlHCatP), L('convert_i'),
+        L('getlocal2'), L('getlocal3'), L('getproperty', late), L('getproperty', fmlHdrP), L('convert_b'), L('iffalse', 'E2'),
+        L('getlocal', 7), L('ifeq', 'E9'),
+        L('jump', 'E3'),
+        ('E2', 'pop'),
+        ('E3', 'inclocal_i', 3), L('jump', 'E1'),
+        ('EP', 'getlocal0'), L('getlocal', 7), L('callproperty', m_cname, 1), L('convert_s'), L('coerce_a'), L('setlocal', 6),
+        L('getlocal2'),
+        L('pushstring', s_idk), L('pushstring', s_empty),
+        L('pushstring', s_labk), L('pushstring', s_nbsp), L('getlocal', 6), L('add'),
+        L('pushstring', s_typek), L('pushbyte', HDR_TYPE),
+        L('pushstring', s_unav), L('pushtrue'),
+        L('pushstring', s_fmlhdr), L('getlocal', 6),
+        L('pushstring', s_hcat), L('getlocal', 7),
+        L('newobject', 6), L('callpropvoid', pushM, 1),
+        ('E9', 'inclocal_i', 7), L('jump', 'E0'),
+        ('RET', 'getlocal2'), L('returnvalue'),
         ('NO', 'getlocal1'), L('returnvalue'),
     ]
 
@@ -2072,8 +2267,18 @@ def patch_abc(abc):
         L('pushbyte', 24), L('convert_d'), L('setlocal', 7),
         ('S1', 'getlocal2'),
         L('pushstring', s_f1), L('getlocal', 7), L('pushbyte', HDR_GROW), L('add'), L('convert_i'), L('add'),
-        L('pushstring', s_f2), L('add'), L('getlocal', 6), L('convert_s'), L('add'), L('pushstring', s_f3),
-        L('add'), L('setproperty', htmlP),
+        L('pushstring', s_f2), L('add'),
+        L('getlocal', 6), L('pushstring', s_hline), L('ifne', 'NLN'),
+        L('pushstring', s_ln_nbsp), L('jump', 'YLN'),
+        ('NLN', 'getlocal', 6), L('convert_s'),
+        ('YLN', 'add'), L('pushstring', s_f3),
+        L('add'),
+        L('getlocal0'), L('getproperty', fmlHovR), L('getlocal1'), L('ifstrictne', 'NHV'),
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'NHV'),
+        L('pushstring', s_hcat), L('getlocal', 4), L('in'), L('iffalse', 'NHV'),
+        L('getlocal', 4), L('getproperty', fmlHCatP), L('convert_i'), L('pushbyte', 0), L('iflt', 'NHV'),
+        L('pushstring', s_hv1), L('add'), *nlabel(REN_IDX, s_renp, 'HV'), L('add'), L('pushstring', s_f3), L('add'),
+        ('NHV', 'setproperty', htmlP),
         # aligned like the mod names (left, right in Arabic), then measured; no "shrink" (it would scale the larger
         # letter back down to the row's field; a later mod row gets it again from fmlApplyTo)
         L('getlocal0'), L('getlocal1'), L('callpropvoid', m_apply, 1),
@@ -2217,9 +2422,14 @@ def patch_abc(abc):
         L('getlocal3'), L('getlocal', 6), L('iflt', 'GR'),
         L('getlocal2'), L('iffalse', 'PE'),
         L('getlocal', 6), L('pushbyte', 2), L('iflt', 'PE'),
-        L('getlocal', 13), L('decrement_i'), L('setlocal', 9),
+        L('getlocal', 6), L('getlocal2'), L('ifngt', 'PE'),
+        L('pushbyte', 1), L('setlocal', 14),
+        ('EJ', 'label'),
+        L('getlocal', 14), L('getlocal2'), L('ifgt', 'PE'),
+        L('getlocal', 13), L('getlocal', 14), L('subtract'), L('convert_i'), L('setlocal', 9),
         L('getlocal', 9), L('pushbyte', 0), L('ifngt', 'PE'),
-        L('getlocal', 9), L('getlocal', 6), L('modulo'), L('convert_i'), L('pushbyte', 0), L('ifne', 'PE'),
+        L('getlocal', 9), L('getlocal', 6), L('modulo'), L('convert_i'), L('pushbyte', 0), L('ifeq', 'GR'),
+        L('inclocal_i', 14), L('jump', 'EJ'),
         ('GR', 'inclocal_i', 12),
         L('getlocal', 12), L('pushbyte', GAP_TRIES), L('ifgt', 'END'),
         L('getlocal', 7), L('iffalse', 'GK'),
@@ -2268,7 +2478,7 @@ def patch_abc(abc):
         L('pushstring', s_fmlkind), L('getlocal1'), L('in'), L('iffalse', 'MISC'),
         L('getlocal1'), L('getproperty', fmlKindP), L('convert_i'), L('setlocal2'),
         L('getlocal2'), L('pushbyte', 255), L('iflt', 'MISC'),
-        L('getlocal2'), L('pushbyte', NUM_CATS), L('ifge', 'MISC'),
+        L('getlocal2'), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifge', 'MISC'),
         L('getlocal2'), L('returnvalue'),
         ('MISC', 'pushbyte', NUM_CATS - 1), L('returnvalue'),
     ]
@@ -2278,7 +2488,7 @@ def patch_abc(abc):
     cname = [
         L('getlocal1'), L('convert_i'), L('setlocal1'),
         L('getlocal1'), L('pushbyte', 0), L('iflt', 'NONE'),
-        L('getlocal1'), L('pushbyte', NUM_CATS), L('ifge', 'NONE'),
+        L('getlocal1'), L('pushbyte', NUM_CATS), L('ifge', 'XC'),
         L('getlocal0'), L('getproperty', fmlNames), L('coerce_a'), L('setlocal2'),
         L('getlocal2'), L('iffalse', 'EN'),
         L('getlocal2'), L('getproperty', length), L('pushbyte', NUM_SORTS + 3 + NUM_CATS), L('iflt', 'EN'),
@@ -2286,7 +2496,114 @@ def patch_abc(abc):
         L('convert_s'), L('returnvalue'),
         ('EN', 'pushstring', s_catnames), L('pushstring', s_bar), L('callproperty', splitM, 1),
         L('getlocal1'), L('getproperty', late), L('convert_s'), L('returnvalue'),
+        # one the user added
+        ('XC', 'getlocal1'), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifge', 'NONE'),
+        L('getlocal0'), L('getproperty', fmlNames), L('getlocal1'), L('pushbyte', NUM_CATS), L('subtract'),
+        L('pushbyte', CCNT_IDX + 1), L('add'), L('convert_i'), L('getproperty', late), L('convert_s'), L('returnvalue'),
         ('NONE', 'pushstring', s_empty), L('returnvalue'),
+    ]
+
+    # fmlNumCats():int - the nine and the ones the user added   1 names
+    ncat = [
+        L('getlocal0'), L('getproperty', fmlNames), L('coerce_a'), L('setlocal1'),
+        L('getlocal1'), L('iffalse', 'NO'),
+        L('getlocal1'), L('getproperty', length), L('pushbyte', CCNT_IDX + 1), L('iflt', 'NO'),
+        L('pushbyte', NUM_CATS), L('getlocal1'), L('pushbyte', CCNT_IDX), L('getproperty', late), L('convert_i'), L('add'),
+        L('convert_i'), L('returnvalue'),
+        ('NO', 'pushbyte', NUM_CATS), L('returnvalue'),
+    ]
+
+    # fmlAddOn():Boolean - the Add Category row shows: By category, keyboard or mouse in use, room for one more
+    addon = [
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'NO'),
+        L('getlex', imC), L('callproperty', instM, 0), L('callproperty', isPadM, 0), L('convert_b'), L('iffalse', 'KB'),
+        L('getlex', imC), L('callproperty', instM, 0), L('callproperty', isMouseM, 0), L('convert_b'), L('iffalse', 'NO'),
+        ('KB', 'getlocal0'), L('callproperty', m_ncat, 0), L('pushbyte', NUM_CATS + MAX_CUSTOM), L('ifge', 'NO'),
+        L('pushtrue'), L('returnvalue'),
+        ('NO', 'pushfalse'), L('returnvalue'),
+    ]
+
+    # fmlCatDel(rows, i, stamp): category i is deleted: its mods back to their guesses, the later ones down one (also
+    # inside a Menu Organizer category)   4 j, 5 row, 6 kind
+    cdel = [
+        L('getlocal1'), L('iffalse', 'END'),
+        L('pushbyte', 0), L('setlocal', 4),
+        ('L0', 'label'),
+        L('getlocal', 4), L('getlocal1'), L('getproperty', length), L('ifnlt', 'END'),
+        L('getlocal1'), L('getlocal', 4), L('getproperty', late), L('coerce_a'), L('setlocal', 5),
+        L('getlocal', 5), L('iffalse', 'L1'),
+        L('pushstring', s_fmlkind), L('getlocal', 5), L('in'), L('iffalse', 'L1'),
+        L('getlocal', 5), L('getproperty', fmlDelS), L('getlocal3'), L('ifeq', 'L1'),
+        L('getlocal', 5), L('getlocal3'), L('setproperty', fmlDelS),
+        L('getlocal', 5), L('getproperty', fmlKindP), L('convert_i'), L('setlocal', 6),
+        L('getlocal', 6), L('pushbyte', 0), L('ifge', 'MOD'),
+        L('getlocal0'), L('getlocal', 5), L('getproperty', subElP), L('getlocal2'), L('getlocal3'), L('callpropvoid', m_cdel, 3),
+        L('jump', 'L1'),
+        ('MOD', 'getlocal', 6), L('getlocal2'), L('ifne', 'LATER'),
+        L('getlocal', 5), L('getlocal', 5), L('getproperty', fmlGuessP), L('convert_i'), L('setproperty', fmlKindP),
+        L('jump', 'L1'),
+        ('LATER', 'getlocal', 6), L('getlocal2'), L('ifngt', 'L1'),
+        L('getlocal', 5), L('getlocal', 6), L('decrement_i'), L('setproperty', fmlKindP),
+        ('L1', 'inclocal_i', 4), L('jump', 'L0'),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlCatDelAll(i): fmlAll, and the Mods container's list among the menu's previous containers   2 stamp, 3 menu, 4 list, 5 k, 6 entry
+    cdall = [
+        L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'), L('setlocal2'),
+        L('getlocal0'), L('getlocal0'), L('getproperty', fmlAll), L('getlocal1'), L('getlocal2'), L('callpropvoid', m_cdel, 3),
+        L('getlocal0'), L('getproperty', parentP), L('coerce_a'), L('setlocal3'),
+        L('getlocal3'), L('iffalse', 'END'),
+        L('pushstring', s_pc), L('getlocal3'), L('in'), L('iffalse', 'END'),
+        L('getlocal3'), L('getproperty', pcP), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'END'),
+        L('pushbyte', 0), L('setlocal', 5),
+        ('L0', 'label'),
+        L('getlocal', 5), L('getlocal', 4), L('getproperty', length), L('ifnlt', 'END'),
+        L('getlocal', 4), L('getlocal', 5), L('getproperty', late), L('coerce_a'), L('setlocal', 6),
+        L('getlocal', 6), L('iffalse', 'L1'),
+        L('getlocal', 6), L('getproperty', idP), L('pushstring', s_mods), L('ifeq', 'GO'),
+        L('getlocal', 6), L('getproperty', idP), L('pushstring', s_Mods), L('ifne', 'L1'),
+        ('GO', 'getlocal0'), L('getlocal', 6), L('getproperty', subElP), L('getlocal1'), L('getlocal2'), L('callpropvoid', m_cdel, 3),
+        ('L1', 'inclocal_i', 5), L('jump', 'L0'),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlHdrHover(e): the mouse moved: a category's header under it says it can be renamed (fmlHdrDraw, fmlHovR)
+    #   2 n, 3 i, 4 renderer, 5 its data, 6 the one found, 7 the one before
+    hhov = [
+        L('pushnull'), L('coerce_a'), L('setlocal', 6),
+        L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'SET'),
+        L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'SET'),
+        L('getlocal0'), L('getproperty', fmlRen), L('iftrue', 'SET'),
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'SET'),
+        *lst, L('getproperty', numR), L('convert_i'), L('setlocal2'),
+        L('pushbyte', 0), L('setlocal3'),
+        ('HL', 'label'),
+        L('getlocal3'), L('getlocal2'), L('ifnlt', 'SET'),
+        *lst, L('getlocal3'), L('callproperty', gra, 1), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'HN'),
+        L('getlocal', 4), L('getproperty', vis), L('iffalse', 'HN'),
+        L('getlocal', 4), L('getproperty', dataP), L('coerce_a'), L('setlocal', 5),
+        L('getlocal', 5), L('iffalse', 'HN'),
+        L('pushstring', s_hcat), L('getlocal', 5), L('in'), L('iffalse', 'HN'),
+        L('getlocal', 5), L('getproperty', fmlHCatP), L('convert_i'), L('pushbyte', 0), L('iflt', 'HN'),
+        L('getlocal', 4), L('getlocal1'), L('getproperty', stageXP), L('getlocal1'), L('getproperty', stageYP),
+        L('pushfalse'), L('callproperty', htpM, 3), L('iffalse', 'HN'),
+        L('getlocal', 4), L('coerce_a'), L('setlocal', 6),
+        L('jump', 'SET'),
+        ('HN', 'inclocal_i', 3),
+        L('jump', 'HL'),
+        ('SET', 'getlocal', 6), L('getlocal0'), L('getproperty', fmlHovR), L('ifstricteq', 'END'),
+        L('getlocal0'), L('getproperty', fmlHovR), L('coerce_a'), L('setlocal', 7),
+        L('getlocal0'), L('getlocal', 6), L('initproperty', fmlHovR),
+        L('getlocal', 7), L('iffalse', 'NEW'),
+        L('getlocal', 7), L('getproperty', dataP), L('iffalse', 'NEW'),
+        L('getlocal', 7), L('getproperty', dataP), L('getproperty', fmlHdrP), L('iffalse', 'NEW'),
+        L('getlocal0'), L('getlocal', 7), L('callpropvoid', m_hdraw, 1),
+        ('NEW', 'getlocal', 6), L('iffalse', 'END'),
+        L('getlocal0'), L('getlocal', 6), L('callpropvoid', m_hdraw, 1),
+        ('END', 'returnvoid'),
     ]
 
     # fmlCatNext(): X / Insert in By category - the selected mod to the next category (after Misc: the first), on
@@ -2304,9 +2621,11 @@ def patch_abc(abc):
         L('getlocal3'), L('iffalse', 'END'),
         L('getlocal3'), L('getproperty', idP), L('iffalse', 'END'),
         *isBack(3, 'END', 'ifeq'),
-        L('getlocal0'), L('getlocal3'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
+        L('getlocal0'), L('getproperty', fmlFTop), L('iftrue', 'KOK'),
+        L('getlocal3'), L('getproperty', fmlFavP), L('convert_b'), L('iftrue', 'END'),
+        ('KOK', 'getlocal0'), L('getlocal3'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
         L('getlocal', 4), L('pushbyte', 0), L('iflt', 'END'),
-        L('getlocal', 4), L('increment_i'), L('pushbyte', NUM_CATS), L('modulo'), L('convert_i'), L('setlocal', 4),
+        L('getlocal', 4), L('increment_i'), L('getlocal0'), L('callproperty', m_ncat, 0), L('modulo'), L('convert_i'), L('setlocal', 4),
         L('getlocal3'), L('getlocal', 4), L('setproperty', fmlKindP),
         L('getlocal0'), L('getlocal3'), L('getproperty', idP), L('convert_s'), L('initproperty', fmlKeepId),
         L('getlocal0'), L('getlocal3'), L('getproperty', idP), L('convert_s'), L('pushstring', s_colon), L('add'),
@@ -2316,8 +2635,36 @@ def patch_abc(abc):
         ('END', 'returnvoid'),
     ]
 
-    # fmlFlag(): LB / Page Up: the selected entry a favorite or not (it stays selected); told to the script next
-    # frame ("id:1" / "id:0"). Headers, Back and Menu Organizer categories are left alone.   1 sel, 2 dp, 3 row, 4 id
+    # fmlFavNext(sel, dp): the id of the next entry below sel, else the nearest above, else null (not headers or Back)
+    #   3 i, 4 row
+    fnext = [
+        L('getlocal1'), L('increment_i'), L('setlocal3'),
+        ('D0', 'label'),
+        L('getlocal3'), L('getlocal2'), L('getproperty', length), L('ifnlt', 'UP'),
+        L('getlocal0'), L('getlocal3'), L('callproperty', m_ishdr, 1), L('iftrue', 'D1'),
+        L('getlocal2'), L('getlocal3'), L('getproperty', late), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'D1'),
+        L('getlocal', 4), L('getproperty', idP), L('iffalse', 'D1'),
+        *isBack(4, 'D1', 'ifeq'),
+        L('getlocal', 4), L('getproperty', fmlAddRP), L('iftrue', 'D1'),
+        L('getlocal', 4), L('getproperty', idP), L('convert_s'), L('returnvalue'),
+        ('D1', 'inclocal_i', 3), L('jump', 'D0'),
+        ('UP', 'getlocal1'), L('decrement_i'), L('setlocal3'),
+        ('U0', 'label'),
+        L('getlocal3'), L('pushbyte', 0), L('iflt', 'NO'),
+        L('getlocal0'), L('getlocal3'), L('callproperty', m_ishdr, 1), L('iftrue', 'U1'),
+        L('getlocal2'), L('getlocal3'), L('getproperty', late), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'U1'),
+        L('getlocal', 4), L('getproperty', idP), L('iffalse', 'U1'),
+        *isBack(4, 'U1', 'ifeq'),
+        L('getlocal', 4), L('getproperty', idP), L('convert_s'), L('returnvalue'),
+        ('U1', 'getlocal3'), L('decrement_i'), L('setlocal3'), L('jump', 'U0'),
+        ('NO', 'pushnull'), L('returnvalue'),
+    ]
+
+    # fmlFlag(): LB / Page Up: the selected entry a favorite or not (the highlight goes on to the next entry, not with
+    # it); told to the script next frame ("id:1" / "id:0"). Headers, Back and Menu Organizer categories are left alone.
+    #   1 sel, 2 dp, 3 row, 4 id, 5 the entry to select after
     flag = [
         *lst, L('getproperty', selIdx), L('convert_i'), L('setlocal1'),
         L('getlocal1'), L('pushbyte', 0), L('iflt', 'END'),
@@ -2331,12 +2678,15 @@ def patch_abc(abc):
         *isBack(3, 'END', 'ifeq'),
         L('getlocal3'), L('getproperty', fmlCatP), L('convert_b'), L('iftrue', 'END'),
         L('getlocal3'), L('getproperty', idP), L('convert_s'), L('coerce_a'), L('setlocal', 4),
-        L('getlocal3'), L('getlocal3'), L('getproperty', fmlFavP), L('convert_b'), L('not'),
+        L('getlocal0'), L('getlocal1'), L('getlocal2'), L('callproperty', m_fnext, 2), L('coerce_a'), L('setlocal', 5),
+        L('getlocal', 5), L('iftrue', 'NX'),
+        L('getlocal', 4), L('setlocal', 5),
+        ('NX', 'getlocal3'), L('getlocal3'), L('getproperty', fmlFavP), L('convert_b'), L('not'),
         L('setproperty', fmlFavP),
         L('getlocal0'), L('getlocal', 4), L('pushstring', s_colon), L('add'),
         L('getlocal3'), L('getproperty', fmlFavP), L('convert_b'), L('convert_i'), L('add'),
         L('initproperty', fmlPFav),
-        L('getlocal0'), L('getlocal', 4), L('initproperty', fmlKeepId),
+        L('getlocal0'), L('getlocal', 5), L('initproperty', fmlKeepId),
         L('getlocal0'), L('callpropvoid', m_refresh, 0),
         L('getlocal0'), L('pushnull'), L('initproperty', fmlKeepId),
         ('END', 'returnvoid'),
@@ -2418,9 +2768,13 @@ def patch_abc(abc):
         ('ESC', 'getlocal', 4), L('pushstring', s_up), L('ifne', 'END'),
         L('getlocal0'), L('pushnull'), L('initproperty', fmlRen),
         L('jump', 'END'),
-        ('ENT', 'getlocal3'), L('pushbyte', 13), L('ifne', 'DN'),
+        ('ENT', 'getlocal3'), L('pushbyte', 13), L('ifne', 'RS'),
         L('getlocal', 4), L('pushstring', s_up), L('ifne', 'END'),
         L('getlocal0'), L('callpropvoid', m_rend, 0),
+        L('jump', 'END'),
+        ('RS', 'getlocal3'), L('pushbyte', KEY_HOME), L('ifne', 'DN'),
+        L('getlocal', 4), L('pushstring', s_up), L('ifne', 'END'),
+        L('getlocal0'), L('callpropvoid', m_rstn, 0),
         L('jump', 'END'),
         ('DN', 'getlocal', 4), L('pushstring', s_up), L('ifeq', 'END'),
         L('getlocal3'), L('pushbyte', 8), L('ifne', 'DEL'),
@@ -2469,7 +2823,10 @@ def patch_abc(abc):
         L('getlocal0'), L('getproperty', fmlRen), L('coerce_a'), L('setlocal1'),
         L('getlocal0'), L('pushnull'), L('initproperty', fmlRen),
         L('getlocal1'), L('iffalse', 'END'),
-        L('getlocal0'), L('getproperty', fmlRenTxt), L('convert_s'), *clean(), L('coerce_a'), L('setlocal2'),
+        L('pushstring', s_rencat), L('getlocal1'), L('in'), L('iffalse', 'NC'),
+        L('getlocal0'), L('getlocal1'), L('getproperty', fmlRenCatP), L('callpropvoid', m_crend, 1),
+        L('jump', 'END'),
+        ('NC', 'getlocal0'), L('getproperty', fmlRenTxt), L('convert_s'), *clean(), L('coerce_a'), L('setlocal2'),
         *trim(2, 'T'),
         *orig(1, 'O1'), L('coerce_a'), L('setlocal3'),
         *star(1, 'S1'), L('coerce_a'), L('setlocal', 4),
@@ -2542,6 +2899,294 @@ def patch_abc(abc):
         ('END', 'returnvoid'),
     ]
 
+    # fmlHdrClick(e): a click anywhere. On a category's header in By category (Mods list with the focus, not renaming):
+    # that category is renamed.   2 n, 3 i, 4 renderer, 5 its data
+    hclick = [
+        L('getlocal0'), L('getproperty', fmlMods), L('iffalse', 'END'),
+        L('getlocal0'), L('getproperty', locked), L('pushbyte', 0), L('ifge', 'END'),
+        L('getlocal0'), L('getproperty', fmlRen), L('iftrue', 'END'),
+        L('getlocal0'), L('callproperty', m_prdy, 0), L('iffalse', 'END'),
+        L('getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', CAT_SORT), L('ifne', 'END'),
+        *lst, L('getproperty', numR), L('convert_i'), L('setlocal2'),
+        L('pushbyte', 0), L('setlocal3'),
+        ('HL', 'label'),
+        L('getlocal3'), L('getlocal2'), L('ifnlt', 'END'),
+        *lst, L('getlocal3'), L('callproperty', gra, 1), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'HN'),
+        L('getlocal', 4), L('getproperty', vis), L('iffalse', 'HN'),
+        L('getlocal', 4), L('getproperty', dataP), L('coerce_a'), L('setlocal', 5),
+        L('getlocal', 5), L('iffalse', 'HN'),
+        L('pushstring', s_hcat), L('getlocal', 5), L('in'), L('iffalse', 'HN'),
+        L('getlocal', 5), L('getproperty', fmlHCatP), L('convert_i'), L('pushbyte', 0), L('iflt', 'HN'),
+        L('getlocal', 4), L('getlocal1'), L('getproperty', stageXP), L('getlocal1'), L('getproperty', stageYP),
+        L('pushfalse'), L('callproperty', htpM, 3), L('iffalse', 'HN'),
+        L('getlocal0'), L('getlocal', 5), L('getproperty', fmlHCatP), L('callpropvoid', m_crstart, 1),
+        L('getlocal0'), L('getlocal1'), L('callpropvoid', m_hhov, 1),
+        L('jump', 'END'),
+        ('HN', 'inclocal_i', 3),
+        L('jump', 'HL'),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlCatRenStart(i): the title shows the name being typed, starting from the one category i has now
+    crstart = [
+        L('getlocal0'), L('pushstring', s_rencat), L('getlocal1'), L('newobject', 1), L('initproperty', fmlRen),
+        L('getlocal0'), L('getlocal0'), L('getlocal1'), L('callproperty', m_cname, 1), L('convert_s'), *clean(),
+        L('initproperty', fmlRenTxt),
+        L('returnvoid'),
+    ]
+
+    # fmlCatRenEnd(i): Enter. The name typed goes to the script ("i=name"; blank: "i=", its own name), and the script
+    # answers with the store and the names (fmlParse shows the list again). The name it has now: nothing.   2 name
+    crend = [
+        L('getlocal0'), L('getproperty', fmlRenTxt), L('convert_s'), *clean(), L('coerce_a'), L('setlocal2'),
+        *trim(2, 'T'),
+        L('getlocal2'), L('getlocal0'), L('getlocal1'), L('callproperty', m_cname, 1), L('convert_s'), L('ifeq', 'END'),
+        L('getlocal2'), L('pushstring', s_empty), L('ifne', 'SD'),
+        L('getlocal1'), L('convert_i'), L('pushbyte', NUM_CATS), L('iflt', 'SD'),
+        L('getlocal0'), L('getlocal1'), L('convert_i'), L('callpropvoid', m_cdall, 1),
+        ('SD', 'getlocal0'), L('getlocal1'), L('convert_i'), L('convert_s'), L('pushstring', s_eq), L('add'),
+        L('getlocal2'), L('add'), L('initproperty', fmlPCatN),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlCatShow():Boolean - the Change category prompt shows: not on a favorite in the Favorites category   1 row
+    cshow = [
+        L('getlocal0'), L('getproperty', fmlFTop), L('iftrue', 'YES'),
+        L('getlocal0'), L('callproperty', m_selrow, 0), L('coerce_a'), L('setlocal1'),
+        L('getlocal1'), L('iffalse', 'YES'),
+        L('getlocal1'), L('getproperty', fmlFavP), L('convert_b'), L('iffalse', 'YES'),
+        L('pushfalse'), L('returnvalue'),
+        ('YES', 'pushtrue'), L('returnvalue'),
+    ]
+
+    # fmlRstCan(row):Boolean - fmlRstRow would change this row (or a row of its own list)   2 sub, 3 j
+    rcan = [
+        L('getlocal1'), L('iffalse', 'NO'),
+        L('pushstring', s_fmlkind), L('getlocal1'), L('in'), L('iffalse', 'NO'),
+        L('getlocal1'), L('getproperty', fmlKindP), L('convert_i'), L('pushbyte', 0), L('ifge', 'MOD'),
+        L('pushstring', s_subel), L('getlocal1'), L('in'), L('iffalse', 'NO'),
+        L('getlocal1'), L('getproperty', subElP), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'NO'),
+        L('pushbyte', 0), L('setlocal3'),
+        ('S0', 'label'),
+        L('getlocal3'), L('getlocal2'), L('getproperty', length), L('ifnlt', 'NO'),
+        L('getlocal0'), L('getlocal2'), L('getlocal3'), L('getproperty', late), L('callproperty', m_rcan, 1),
+        L('iftrue', 'YES'),
+        L('inclocal_i', 3), L('jump', 'S0'),
+        ('MOD', 'pushstring', s_fmlguess), L('getlocal1'), L('in'), L('iffalse', 'NO'),
+        L('getlocal1'), L('getproperty', fmlKindP), L('convert_i'), L('getlocal1'), L('getproperty', fmlGuessP),
+        L('convert_i'), L('ifeq', 'NO'),
+        ('YES', 'pushtrue'), L('returnvalue'),
+        ('NO', 'pushfalse'), L('returnvalue'),
+    ]
+
+    # fmlRstAny():Boolean - a row of the list can reset   1 i
+    rall = [
+        L('getlocal0'), L('getproperty', fmlAll), L('iffalse', 'NO'),
+        L('pushbyte', 0), L('setlocal1'),
+        ('L0', 'label'),
+        L('getlocal1'), L('getlocal0'), L('getproperty', fmlAll), L('getproperty', length), L('ifnlt', 'NO'),
+        L('getlocal0'), L('getlocal0'), L('getproperty', fmlAll), L('getlocal1'), L('getproperty', late),
+        L('callproperty', m_rcan, 1), L('iftrue', 'YES'),
+        L('inclocal_i', 1), L('jump', 'L0'),
+        ('YES', 'pushtrue'), L('returnvalue'),
+        ('NO', 'pushfalse'), L('returnvalue'),
+    ]
+
+    # fmlPopHide(name): the dialog's child out of sight
+    phide = [
+        L('getlocal0'), L('getproperty', fmlPopS), L('getlocal1'), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'END'),
+        L('getlocal2'), L('pushfalse'), L('setproperty', vis),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlPopPut(name, y, text): the dialog's child at y, with this text unless null
+    pput = [
+        L('getlocal0'), L('getproperty', fmlPopS), L('getlocal1'), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal', 4),
+        L('getlocal', 4), L('iffalse', 'END'),
+        L('getlocal2'), L('pushbyte', 0), L('ifngt', 'T'),
+        L('getlocal', 4), L('getlocal2'), L('setproperty', Y),
+        ('T', 'getlocal3'), L('pushnull'), L('ifstricteq', 'END'),
+        L('getlocal', 4), L('getlocal3'), L('convert_s'), L('setproperty', textP),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlRenCan():Boolean - what is being renamed has a name of the user's to take back   1 fmlRen
+    rcn = [
+        L('getlocal0'), L('getproperty', fmlRen), L('coerce_a'), L('setlocal1'),
+        L('getlocal1'), L('iffalse', 'NO'),
+        L('pushstring', s_rencat), L('getlocal1'), L('in'), L('iffalse', 'MOD'),
+        L('getlocal1'), L('getproperty', fmlRenCatP), L('convert_i'), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifge', 'NO'),
+        L('getlocal1'), L('getproperty', fmlRenCatP), L('convert_i'), L('pushbyte', NUM_CATS), L('ifge', 'YES'),
+        L('getlocal0'), L('getproperty', fmlNames), L('iffalse', 'YES'),
+        L('getlocal0'), L('getproperty', fmlNames), L('getproperty', length), L('pushbyte', CREN_IDX + 1), L('iflt', 'YES'),
+        L('getlocal0'), L('getproperty', fmlNames), L('pushbyte', CREN_IDX), L('getproperty', late), L('convert_s'),
+        L('getlocal1'), L('getproperty', fmlRenCatP), L('convert_i'), L('callproperty', charAtM, 1), L('convert_s'),
+        L('pushstring', s_one), L('ifeq', 'YES'),
+        L('jump', 'NO'),
+        ('MOD', 'label'), *orig(1, 'O1'), L('convert_s'), L('pushstring', s_empty), L('ifeq', 'NO'),
+        ('YES', 'pushtrue'), L('returnvalue'),
+        ('NO', 'pushfalse'), L('returnvalue'),
+    ]
+
+    # fmlRenRstNow(): Reset name - back to its own name, by the blank-name way Enter has
+    rstn = [
+        L('getlocal0'), L('callproperty', m_rcn, 0), L('iffalse', 'END'),
+        L('getlocal0'), L('pushstring', s_empty), L('initproperty', fmlRenTxt),
+        L('getlocal0'), L('callpropvoid', m_rend, 0),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlPopReady():Boolean - not within POP_MS of the pop-up opening or closing (a double click, or the end of the click
+    # on a button). The first time fmlRenAt is undefined: NaN compares false, so ready.
+    prdy = [
+        L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'),
+        L('getlocal0'), L('getproperty', fmlRenAt), L('convert_d'), L('subtract'), L('pushshort', POP_MS), L('iflt', 'NO'),
+        L('pushtrue'), L('returnvalue'),
+        ('NO', 'pushfalse'), L('returnvalue'),
+    ]
+    stamp = [L('getlocal0'), L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'), L('initproperty', fmlRenAt)]
+
+    # the buttons, as Enter / Home / Esc
+    pok = [
+        L('getlocal0'), L('callproperty', m_prdy, 0), L('iffalse', 'END'),
+        L('getlocal0'), L('callpropvoid', m_rend, 0), *stamp,
+        ('END', 'returnvoid'),
+    ]
+    prs = [
+        L('getlocal0'), L('callproperty', m_prdy, 0), L('iffalse', 'END'),
+        L('getlocal0'), L('callpropvoid', m_rstn, 0), *stamp,
+        ('END', 'returnvoid'),
+    ]
+    pes = [
+        L('getlocal0'), L('callproperty', m_prdy, 0), L('iffalse', 'END'),
+        L('getlocal0'), L('pushnull'), L('initproperty', fmlRen), *stamp,
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlPopBtn(name, label, pad code, key, handler): a button of the game's in the dialog   6 button, 7 class
+    pbtn = [
+        L('findpropstrict', gdbn), L('pushstring', s_pbc), L('callproperty', gdbn, 1), L('coerce_a'), L('setlocal', 7),
+        L('getlocal', 7), L('construct', 0), L('coerce_a'), L('setlocal', 6),
+        L('getlocal', 6), L('getlocal1'), L('setproperty', nameP),
+        L('getlocal0'), L('getproperty', fmlPopS), L('getlocal', 6), L('callpropvoid', addChild, 1),
+        L('getlocal', 6), L('pushtrue'), L('setproperty', clickP),
+        L('getlocal', 6), L('getlocal2'), L('setproperty', labelP),
+        L('getlocal', 6), L('getlocal3'), L('getlocal', 4), L('callpropvoid', sdfs, 2),
+        L('getlocal', 6), L('getlex', btnEv), L('getproperty', pressP), L('getlocal', 5), L('callpropvoid', ael, 2),
+        L('getlocal', 6), L('pushshort', POP_BTN_Y), L('setproperty', Y),
+        L('getlocal', 6), L('callpropvoid', vnow, 0),
+        L('returnvoid'),
+    ]
+
+    # fmlPopInit(): the new dialog: its verification parts hidden, sized, the text box framed, the buttons made.  1 dialog, 2 child
+    pinit = [
+        L('getlocal0'), L('getproperty', fmlPopS), L('coerce_a'), L('setlocal1'),
+        L('getlocal1'), L('pushshort', POP_X), L('setproperty', X),
+        L('getlocal1'), L('pushshort', POP_Y), L('setproperty', Y),
+        *[x for n in s_pophide for x in (L('getlocal0'), L('pushstring', n), L('callpropvoid', m_phide, 1))],
+        L('getlocal1'), L('pushstring', s_popbg), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'S1'),
+        L('getlocal2'), L('pushshort', POP_H), L('setproperty', Hd),
+        ('S1', 'getlocal1'), L('pushstring', s_popst), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'S2'),
+        L('getlocal2'), L('pushshort', POP_STRIP_Y), L('setproperty', Y),
+        ('S2', 'getlocal0'), L('pushstring', s_popl), L('pushbyte', POP_BOX_Y), L('pushnull'), L('callpropvoid', m_pput, 3),
+        L('getlocal1'), L('pushstring', s_popl), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'S3'),
+        L('getlocal2'), L('pushbyte', POP_BOX_H), L('setproperty', Hd),
+        L('getlocal2'), L('pushtrue'), L('setproperty', bgP),
+        L('getlocal2'), L('pushbyte', 0), L('setproperty', bgC),
+        L('getlocal2'), L('pushtrue'), L('setproperty', borderP),
+        L('getlocal2'), L('pushint', c.integer(0x888478)), L('setproperty', borderC),
+        ('S3', 'getlocal0'), L('pushstring', s_pbok), L('pushstring', s_laok), L('getlex', navC), L('getproperty', navA), L('pushbyte', 13),
+        L('getlocal0'), L('getproperty', m_pok), L('callpropvoid', m_pbtn, 5),
+        L('getlocal0'), L('pushstring', s_pbrs), *nlabel(REN_RST_IDX, s_renrs, 'PL'), L('getlex', navC), L('getproperty', navY), L('pushbyte', KEY_HOME),
+        L('getlocal0'), L('getproperty', m_prs), L('callpropvoid', m_pbtn, 5),
+        L('getlocal0'), L('pushstring', s_pbes), L('pushstring', s_laes), L('getlex', navC), L('getproperty', navB), L('pushbyte', KEY_ESC),
+        L('getlocal0'), L('getproperty', m_pes), L('callpropvoid', m_pbtn, 5),
+        L('returnvoid'),
+    ]
+
+    # fmlPopLay(): the buttons centered in the dialog; Reset name only when there is a name to reset.
+    #   1 dialog, 2 ok, 3 reset, 4 esc, 5 can, 6 total, 7 x
+    play = [
+        L('getlocal0'), L('getproperty', fmlPopS), L('coerce_a'), L('setlocal1'),
+        L('getlocal1'), L('pushstring', s_pbok), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal2'),
+        L('getlocal1'), L('pushstring', s_pbrs), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal3'),
+        L('getlocal1'), L('pushstring', s_pbes), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal', 4),
+        L('getlocal2'), L('iffalse', 'END'), L('getlocal3'), L('iffalse', 'END'), L('getlocal', 4), L('iffalse', 'END'),
+        L('getlocal0'), L('callproperty', m_rcn, 0), L('convert_b'), L('coerce_a'), L('setlocal', 5),
+        L('getlocal3'), L('getlocal', 5), L('setproperty', vis),
+        L('getlocal3'),
+        L('pushstring', s_rencat), L('getlocal0'), L('getproperty', fmlRen), L('in'), L('iffalse', 'LR'),
+        L('getlocal0'), L('getproperty', fmlRen), L('getproperty', fmlRenCatP), L('convert_i'), L('pushbyte', NUM_CATS), L('iflt', 'LR'),
+        *nlabel(DEL_IDX, s_delcat, 'LD'), L('jump', 'LS'),
+        ('LR', 'nop'), *nlabel(REN_RST_IDX, s_renrs, 'LE'),
+        ('LS', 'setproperty', labelP),
+        L('getlocal3'), L('callpropvoid', vnow, 0),
+        L('getlocal2'), L('callproperty', occW, 0), L('convert_d'), L('pushbyte', POP_GAP), L('add'),
+        L('getlocal', 4), L('callproperty', occW, 0), L('convert_d'), L('add'), L('coerce_a'), L('setlocal', 6),
+        L('getlocal', 5), L('iffalse', 'W'),
+        L('getlocal', 6), L('getlocal3'), L('callproperty', occW, 0), L('convert_d'), L('add'), L('pushbyte', POP_GAP), L('add'), L('coerce_a'), L('setlocal', 6),
+        ('W', 'getlocal1'), L('pushstring', s_popst), L('callproperty', gcbn, 1), L('coerce_a'), L('setlocal', 8),
+        L('getlocal', 8), L('iffalse', 'NS'),
+        L('getlocal', 8), L('getlocal', 6), L('pushbyte', POP_STRIP_PAD), L('add'), L('setproperty', Wd),
+        ('NS', 'pushshort', POP_BTN_X), L('getlocal', 6), L('pushbyte', 2), L('divide'), L('subtract'), L('coerce_a'), L('setlocal', 7),
+        L('getlocal2'), L('getlocal', 7), L('setproperty', X),
+        L('getlocal', 7), L('getlocal2'), L('callproperty', occW, 0), L('convert_d'), L('add'), L('pushbyte', POP_GAP), L('add'), L('coerce_a'), L('setlocal', 7),
+        L('getlocal', 5), L('iffalse', 'E'),
+        L('getlocal3'), L('getlocal', 7), L('setproperty', X),
+        L('getlocal', 7), L('getlocal3'), L('callproperty', occW, 0), L('convert_d'), L('add'), L('pushbyte', POP_GAP), L('add'), L('coerce_a'), L('setlocal', 7),
+        ('E', 'getlocal', 4), L('getlocal', 7), L('setproperty', X),
+        ('END', 'returnvoid'),
+    ]
+
+    # fmlPop(): every frame - while fmlRen is set the dialog shows the name being typed, over the list (dimmed: the real
+    # dialog blurs what's behind it); else it is out of sight.   1 dialog, 2 menu, 3 class
+    pop = [
+        L('getlocal0'), L('getproperty', fmlPopS), L('coerce_a'), L('setlocal1'),
+        L('getlocal0'), L('getproperty', fmlRen), L('iftrue', 'ON'),
+        L('getlocal1'), L('iffalse', 'END'),
+        L('getlocal1'), L('getproperty', vis), L('iffalse', 'END'),
+        L('getlocal1'), L('pushfalse'), L('setproperty', vis),
+        L('getlocal0'), L('pushbyte', 1), L('setproperty', alphaP),
+        L('jump', 'END'),
+        ('ON', 'getlocal0'), L('getproperty', parentP), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iffalse', 'END'),
+        L('getlocal1'), L('iftrue', 'HAVE'),
+        L('findpropstrict', gdbn), L('pushstring', s_popc), L('callproperty', gdbn, 1), L('coerce_a'), L('setlocal3'),
+        L('getlocal3'), L('construct', 0), L('coerce_a'), L('setlocal1'),
+        L('getlocal0'), L('getlocal1'), L('initproperty', fmlPopS),
+        L('getlocal2'), L('getlocal1'), L('callpropvoid', addChild, 1),
+        # its configUI now, not later: it shows the list part and listens to the keys, and the keys here are for the name
+        L('getlocal1'), L('callpropvoid', vnow, 0),
+        L('getlocal0'), L('getproperty', stageP), L('getlex', inEv), L('getproperty', inInput), L('getlocal1'), L('getproperty', hInput),
+        L('callpropvoid', remel, 2),
+        L('getlocal0'), L('callpropvoid', m_pinit, 0),
+        L('getlocal1'), L('pushfalse'), L('setproperty', vis),
+        ('HAVE', 'getlocal1'), L('getproperty', vis), L('iftrue', 'TXT'),
+        L('getlocal2'), L('getlocal1'), L('callpropvoid', addChild, 1),
+        L('getlocal1'), L('pushtrue'), L('setproperty', vis),
+        L('getlocal0'), L('pushbyte', 1), L('pushbyte', 4), L('divide'), L('setproperty', alphaP),
+        *stamp,
+        L('getlocal0'), L('callpropvoid', m_play, 0),
+        L('getlocal0'), L('pushstring', s_popt), L('pushbyte', 0),
+        L('pushstring', s_rencat), L('getlocal0'), L('getproperty', fmlRen), L('in'), L('iffalse', 'PM'),
+        L('getlocal0'), L('getproperty', fmlRen), L('getproperty', fmlRenCatP), L('convert_i'),
+        L('getlocal0'), L('callproperty', m_ncat, 0), L('iflt', 'PCR'),
+        *nlabel(ADD_IDX, s_addcat, 'PA'), L('jump', 'PW'),
+        ('PCR', 'nop'), *nlabel(REN_CAT_IDX, s_renct, 'PC'), L('jump', 'PW'),
+        ('PM', 'nop'), *nlabel(REN_MOD_IDX, s_renmd, 'PD'),
+        ('PW', 'convert_s'), L('callproperty', upperM, 0), L('callpropvoid', m_pput, 3),
+        ('TXT', 'getlocal0'), L('pushstring', s_popl), L('pushbyte', 0),
+        L('getlocal0'), L('getproperty', fmlRenTxt), L('convert_s'), L('pushstring', s_us), L('add'),
+        L('callpropvoid', m_pput, 3),
+        ('END', 'returnvoid'),
+    ]
+
     # fmlCatReset(): Y / Home in By category. Not armed (or armed longer than RESET_MS ago): arm (fmlUi shows the
     # prompt as "Press again to reset"). Armed: every Mods row with a category of ours (fmlKind >= 0) and the
     # script's guess (fmlGuess; rows of an older script have none and stay) goes back to the guess, the list shown
@@ -2550,7 +3195,9 @@ def patch_abc(abc):
     # in the list shown has its own list (subElements) reset too, so a reset from the top level covers all of them
     # and one inside a category only that category.   1 sel, 2 dp, 3 row, 4 i, 5 now, 6 ids
     crst = [
-        L('findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'), L('setlocal', 5),
+        L('getlocal0'), L('callproperty', m_rall, 0), L('iftrue', 'GO'),
+        L('returnvoid'),
+        ('GO', 'findpropstrict', getTimer), L('callproperty', getTimer, 0), L('convert_d'), L('setlocal', 5),
         L('getlocal0'), L('getproperty', fmlRArmT), L('pushbyte', 0), L('ifngt', 'ARM'),
         L('getlocal', 5), L('getlocal0'), L('getproperty', fmlRArmT), L('subtract'), L('pushshort', RESET_MS),
         L('ifgt', 'ARM'),
@@ -2617,26 +3264,50 @@ def patch_abc(abc):
     any_t = 0
     M.add_method(c, ci, m_kind, [any_t], any_t, kind, 4, 3, lbody, 'fko_')
     M.add_method(c, ci, m_crst, [], void, crst, 6, 7, lbody, 'fcr_')
-    M.add_method(c, ci, m_flag, [], void, flag, 8, 5, lbody, 'ffl_')
+    M.add_method(c, ci, m_fnext, [any_t, any_t], any_t, fnext, 6, 5, lbody, 'ffx_')
+    M.add_method(c, ci, m_flag, [], void, flag, 8, 6, lbody, 'ffl_')
     M.add_method(c, ci, m_fpr, [], void, fpr, 8, 2, lbody, 'ffp_')
     M.add_method(c, ci, m_selrow, [], any_t, selrow, 6, 4, lbody, 'fsr_')
     M.add_method(c, ci, m_rstart, [], void, rstart, 10, 2, lbody, 'frs_')
     M.add_method(c, ci, m_rkey, [any_t], void, rkey, 8, 8, lbody, 'frk_')
     M.add_method(c, ci, m_rend, [], void, rend, 8, 6, lbody, 'fre_')
+    M.add_method(c, ci, m_hclick, [any_t], void, hclick, 8, 6, lbody, 'fhc_')
+    M.add_method(c, ci, m_cshow, [], any_t, cshow, 4, 2, lbody, 'fcw_')
+    M.add_method(c, ci, m_rcan, [any_t], any_t, rcan, 6, 4, lbody, 'frc_')
+    M.add_method(c, ci, m_rall, [], any_t, rall, 6, 2, lbody, 'fra_')
+    M.add_method(c, ci, m_phide, [any_t], void, phide, 4, 3, lbody, 'fph_')
+    M.add_method(c, ci, m_pput, [any_t, any_t, any_t], void, pput, 4, 5, lbody, 'fpp_')
+    M.add_method(c, ci, m_rcn, [], any_t, rcn, 6, 2, lbody, 'frn_')
+    M.add_method(c, ci, m_rstn, [], void, rstn, 4, 1, lbody, 'fry_')
+    M.add_method(c, ci, m_prdy, [], any_t, prdy, 5, 1, lbody, 'fpd_')
+    M.add_method(c, ci, m_pok, [any_t], void, pok, 5, 2, lbody, 'fpk_')
+    M.add_method(c, ci, m_prs, [any_t], void, prs, 5, 2, lbody, 'fpr_')
+    M.add_method(c, ci, m_pes, [any_t], void, pes, 5, 2, lbody, 'fpe_')
+    M.add_method(c, ci, m_pbtn, [any_t, any_t, any_t, any_t, any_t], void, pbtn, 6, 8, lbody, 'fpb_')
+    M.add_method(c, ci, m_pinit, [], void, pinit, 10, 3, lbody, 'fpi_')
+    M.add_method(c, ci, m_play, [], void, play, 8, 9, lbody, 'fpl_')
+    M.add_method(c, ci, m_pop, [], void, pop, 12, 4, lbody, 'fpo_')
+    M.add_method(c, ci, m_crstart, [any_t], void, crstart, 8, 2, lbody, 'fcs_')
+    M.add_method(c, ci, m_crend, [any_t], void, crend, 9, 3, lbody, 'fce_')
     M.add_method(c, ci, m_rrst, [any_t], void, rrst, 8, 3, lbody, 'frz_')
     M.add_method(c, ci, m_rpr, [], void, rpr, 8, 4, lbody, 'frp_')
     M.add_method(c, ci, m_rrow, [any_t, any_t], any_t, rrow, 6, 5, lbody, 'frr_')
-    M.add_method(c, ci, m_cname, [any_t], any_t, cname, 5, 3, lbody, 'fcn_')
+    M.add_method(c, ci, m_cname, [any_t], any_t, cname, 6, 3, lbody, 'fcn_')
+    M.add_method(c, ci, m_ncat, [], any_t, ncat, 5, 2, lbody, 'fnc_')
+    M.add_method(c, ci, m_addon, [], any_t, addon, 4, 1, lbody, 'fao_')
+    M.add_method(c, ci, m_cdel, [any_t, any_t, any_t], void, cdel, 6, 7, lbody, 'fcd_')
+    M.add_method(c, ci, m_cdall, [any_t], void, cdall, 6, 7, lbody, 'fca_')
+    M.add_method(c, ci, m_hhov, [any_t], void, hhov, 8, 8, lbody, 'fhh_')
     M.add_method(c, ci, m_cnext, [], void, cnext, 6, 5, lbody, 'fcx_')
     M.add_method(c, ci, m_ishdr, [any_t], any_t, ishdr, 4, 4, lbody, 'fhi_')
     M.add_method(c, ci, m_hskip, [any_t, any_t], any_t, hskip, 4, 5, lbody, 'fhs_')
-    M.add_method(c, ci, m_hdrs, [any_t], any_t, hdrs, 14, 8, lbody, 'fhr_')
-    M.add_method(c, ci, m_hdraw, [any_t], any_t, hdraw, 8, 12, lbody, 'fhd_')
+    M.add_method(c, ci, m_hdrs, [any_t], any_t, hdrs, 19, 8, lbody, 'fhr_')
+    M.add_method(c, ci, m_hdraw, [any_t], any_t, hdraw, 12, 12, lbody, 'fhd_')
     M.add_method(c, ci, m_htog, [], void, htog, 6, 4, lbody, 'fht_')
-    M.add_method(c, ci, m_gaps, [any_t, any_t], void, gaps, 16, 14, lbody, 'fgp_')
+    M.add_method(c, ci, m_gaps, [any_t, any_t], void, gaps, 16, 15, lbody, 'fgp_')
     M.add_method(c, ci, m_regap, [], void, regap, 6, 4, lbody, 'frg_')
     M.add_method(c, ci, m_hits, [any_t], any_t, hits, 6, 4, lbody, 'fh2_')
-    M.add_method(c, ci, m_view, [any_t], any_t, view, 8, 10, lbody, 'fv_')
+    M.add_method(c, ci, m_view, [any_t], any_t, view, 15, 11, lbody, 'fv_')
     M.add_method(c, ci, m_less, [any_t, any_t], any_t, less, 6, 7, lbody, 'fc_')
     M.add_method(c, ci, m_coll, [any_t], void, coll, 8, 20, lbody, 'fcl_')
     M.add_method(c, ci, m_refresh, [], void, refresh, 5, 1, lbody, 'fx_')
@@ -3012,7 +3683,13 @@ def patch_abc(abc):
         raise PatchError('activateMenuListItem: handleEntrySelected call not found')
     item = ins[k[0] - 1][2][0]
     ins = insert_at(ins, k[0] - 2, [L('getlocal0'), L('getproperty', mlm), L('getproperty', fmlMods), L('iffalse', 'SK'),
+                                     L('getlocal', item), L('getproperty', fmlAddRP), L('iffalse', 'NA'),
+                                     L('getlocal0'), L('getproperty', mlm), L('callproperty', m_addon, 0), L('iffalse', 'NA9'),
                                      L('getlocal0'), L('getproperty', mlm),
+                                     L('getlocal0'), L('getproperty', mlm), L('callproperty', m_ncat, 0),
+                                     L('callpropvoid', m_crstart, 1),
+                                     ('NA9', 'returnvoid'),
+                                     ('NA', 'getlocal0'), L('getproperty', mlm),
                                      L('getlocal', item), L('getproperty', idP), L('convert_s'),
                                      L('setproperty', fmlPOpen),
                                      L('getlocal0'), L('getproperty', mlm),
@@ -3028,6 +3705,14 @@ def patch_abc(abc):
     ins = insert_at(ins, k[0] - 1, [L('getlocal', 6), L('getlex', backLex), L('ifeq', 'NB'),
                                      L('getlocal0'), L('getproperty', mlm), L('pushtrue'), L('setproperty', fmlNoRs),
                                      ('NB', 'nop')], 'h7b_')
+    k = [i for i, x in enumerate(ins) if op_name(x) == 'callpropvoid' and abc.mn(x[2][0]) == 'handleNavigateBack']
+    ins = insert_at(ins, k[0] + 1, [L('getlocal', item), L('getproperty', fmlAddRP), L('iffalse', 'NC'),
+                                     L('getlocal0'), L('getproperty', mlm), L('callproperty', m_addon, 0), L('iffalse', 'NC9'),
+                                     L('getlocal0'), L('getproperty', mlm),
+                                     L('getlocal0'), L('getproperty', mlm), L('callproperty', m_ncat, 0),
+                                     L('callpropvoid', m_crstart, 1),
+                                     ('NC9', 'returnvoid'),
+                                     ('NC', 'nop')], 'h7c_')
     b['code'], _ = abcrt.encode(ins)
     b['max_stack'] = max(b['max_stack'], 4)
 
