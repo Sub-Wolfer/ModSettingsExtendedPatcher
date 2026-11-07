@@ -4,9 +4,12 @@ import glob
 import json
 import os
 import re
+import hashlib
 import subprocess
 import sys
 import tempfile
+import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -18,7 +21,7 @@ import uw_map_patch as M  # noqa: E402
 import w3bundle     # noqa: E402
 import w3meta       # noqa: E402
 
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 DEPOT = fml_patch.DEPOT
 MSE_DIR = 'mod00000_ModSettingsExtended'
 MSE_SCRIPT = os.path.join('content', 'scripts', 'local', 'FullModsList.ws')
@@ -30,6 +33,118 @@ RTG_NAME = 'Real-Time Graphics and HDR Menus Preview'
 
 class PatchFailed(Exception):
     pass
+
+
+# ---- 1.2.1: the log. One file per run, next to the patcher (else %TEMP%): what the window decides from plus the
+# details a bug report needs (game folder, every mod with the menu file and which one wins, versions found, errors).
+LOG_NAME = 'ModSettingsExtendedPatcher-log.txt'
+LOG_PATH = None
+
+
+def _here():
+    return os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
+
+
+def log_start():
+    global LOG_PATH
+    for d in (_here(), tempfile.gettempdir()):
+        p = os.path.join(d, LOG_NAME)
+        try:
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write('Mod Settings Extended Patcher %s log, %s\n' % (VERSION, time.strftime('%Y-%m-%d %H:%M:%S')))
+            LOG_PATH = p
+            return p
+        except OSError:
+            pass
+    return None
+
+
+def log(msg=''):
+    if not LOG_PATH:
+        return
+    try:
+        with open(LOG_PATH, 'a', encoding='utf-8') as f:
+            f.write('[%s] %s\n' % (time.strftime('%H:%M:%S'), msg))
+    except OSError:
+        pass
+
+
+def log_exc():
+    log(traceback.format_exc().rstrip())
+
+
+def documents_dir():
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser('~'), 'Documents')
+
+
+def mods_settings():
+    """{mod folder (lower case): priority} from Documents\The Witcher 3\mods.settings; None when there is no file"""
+    out = {}
+    p = os.path.join(documents_dir(), 'The Witcher 3', 'mods.settings')
+    try:
+        cur = None
+        with open(p, encoding='utf-8', errors='replace') as f:
+            for ln in f:
+                ln = ln.strip()
+                if ln.startswith('[') and ln.endswith(']'):
+                    cur = ln[1:-1].lower()
+                elif cur and ln.lower().startswith('priority='):
+                    out[cur] = ln.split('=', 1)[1].strip()
+    except OSError:
+        return None
+    return out
+
+
+def _short_hash(data):
+    return hashlib.sha256(data).hexdigest()[:12] if data else '-'
+
+
+def log_report(game, how):
+    """everything the window decides from, for this game folder"""
+    try:
+        log('Game folder: %s (%s)' % (game, how))
+        if not game:
+            return
+        log('Game folder valid: %s; Mods folder exists: %s' % (is_game_dir(game), os.path.isdir(mods_dir(game))))
+        log('Mod Settings Extended installed: %s (Mods\\%s)' % (mse_installed(game), MSE_DIR))
+        bp = os.path.join(mse_content(game), 'blob0.bundle')
+        d = entry_data(bp) if os.path.isfile(bp) else None
+        log('MSE menu file: %s, state %s, sha %s' % (bp, current_state(game), _short_hash(d)))
+        prio = mods_settings()
+        log('mods.settings: %s' % ('not found' if prio is None else (prio or 'no priorities')))
+        menu = [(MSE_DIR, bp, False)] + other_menu_mods(game)
+
+        def key(m):
+            v = (prio or {}).get(m[0].lower())
+            if v is not None and v.lstrip('-').isdigit():
+                return (0, int(v), m[0].lower())
+            return (1, 0, m[0].lower())
+        log('Mods that ship the menu file (panel_ingamemenu.redswf), in the order the game most likely picks (first wins; estimated from mods.settings Priority, lowest first, then folder name):')
+        for i, (mod, b, rtg) in enumerate(sorted(menu, key=key)):
+            if mod == MSE_DIR:
+                kind = 'Mod Settings Extended'
+            elif rtg:
+                kind = 'Real-Time Graphics, ' + ('T toggle' if has_t_toggle(b) else 'no T toggle')
+            else:
+                kind = 'other'
+            log('  %d. Mods\\%s  [%s]  %s, sha %s' % (i + 1, mod, kind, os.path.basename(b), _short_hash(entry_data(b))))
+        if not any(r for _, _, r in menu):
+            log('Real-Time Graphics was not recognized in any mod. If it is installed, its menu file may be a version '
+                'this patcher does not know.')
+        try:
+            names = sorted(os.listdir(mods_dir(game)), key=str.lower)
+            log('Mods folder (%d): %s' % (len(names), ', '.join(names)))
+        except OSError as ex:
+            log('Mods folder not readable: %s' % ex)
+    except Exception:
+        log_exc()
 
 
 def is_game_dir(d):
@@ -100,10 +215,12 @@ def find_game_dir():
 
 def game_running():
     try:
-        out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq witcher3.exe', '/NH'], capture_output=True, text=True,
-                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout
-        return 'witcher3.exe' in out.lower()
-    except OSError:
+        # bytes, not text: tasklist writes in the console code page (German "ausgef\x81hrt" can't be decoded as cp1252)
+        out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq witcher3.exe', '/NH'], capture_output=True,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout or b''
+        return b'witcher3.exe' in out.lower()
+    except Exception:
+        log_exc()
         return False
 
 

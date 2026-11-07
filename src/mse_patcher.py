@@ -15,7 +15,9 @@ FONT = ('Segoe UI', 10)
 class App:
     def __init__(self, root):
         self.root = root
+        core.log_start()
         self.game = core.find_game_dir()
+        core.log_report(self.game, 'found automatically' if self.game else 'not found')
         self.rtg = None
         root.title('Mod Settings Extended Patcher %s' % core.VERSION)
         root.configure(bg=BG)
@@ -46,6 +48,8 @@ class App:
         self.b_combine.pack(side='left')
         self.b_restore = self._button(btns, 'Restore standard MSE', self.restore)
         self.b_restore.pack(side='left', padx=10)
+        self.b_log = self._button(btns, 'Open log', self.open_log)
+        self.b_log.pack(side='right')
 
         self.msg = tk.Label(root, text='', bg=BG, fg=FG, font=FONT, anchor='w', justify='left', wraplength=680)
         self.msg.pack(fill='x', padx=18, pady=(12, 4))
@@ -71,7 +75,9 @@ class App:
             if core.is_game_dir(d):
                 self.game = os.path.normpath(d)
                 self.say('')
+                core.log_report(self.game, 'chosen with Browse')
             else:
+                core.log('Browse: not a game folder: %s' % d)
                 self.say('That folder is not The Witcher 3 (no content\\content0 or bin folder in it).', ERR)
             self.refresh()
 
@@ -110,8 +116,10 @@ class App:
         self.b_combine.configure(state='normal' if can_combine else 'disabled')
         self.b_restore.configure(state='normal' if can_restore else 'disabled')
 
-    def _run(self, job, done):
+    def _run(self, job_name, job, done):
+        core.log('%s pressed' % job_name)
         if core.game_running():
+            core.log('Refused: The Witcher 3 is running.')
             self.say('Close The Witcher 3 first, then try again.', ERR)
             return
         self.b_combine.configure(state='disabled')
@@ -123,28 +131,50 @@ class App:
                 job()
                 res = (done, OK)
             except core.PatchFailed as ex:
+                core.log_exc()
                 res = (str(ex) + ' Nothing was changed.', ERR)
             except PermissionError:
+                core.log_exc()
                 res = ('Windows refused the write. Close the game, or run the patcher as administrator.', ERR)
             except Exception as ex:
+                core.log_exc()
                 res = ('Unexpected error: %s: %s' % (type(ex).__name__, ex), ERR)
+            core.log('Result: ' + res[0])
+            core.log_report(self.game, 'after ' + job_name)
             self.root.after(0, lambda: (self.refresh(), self.say(*res)))
         threading.Thread(target=work, daemon=True).start()
 
     def combine(self):
         bp = self.rtg[1]
-        self._run(lambda: core.combine(self.game, bp),
+        self._run('Combine', lambda: core.combine(self.game, bp),
                   'Done. Both mods now share one menu file: T toggles transparency in the menus '
                   '(in the Mods list, T types into the search).' if core.has_t_toggle(bp) else
                   'Done. Both mods now share one menu file.')
 
+    def open_log(self):
+        if core.LOG_PATH and os.path.isfile(core.LOG_PATH):
+            os.startfile(core.LOG_PATH)
+        else:
+            self.say("No log could be written (the patcher's folder and %TEMP% both refused it).", ERR)
+
     def restore(self):
-        self._run(lambda: core.restore(self.game), 'Done. Mod Settings Extended uses its standard menu file again.')
+        self._run('Restore', lambda: core.restore(self.game), 'Done. Mod Settings Extended uses its standard menu file again.')
 
 
 def main():
     root = tk.Tk()
-    App(root)
+    app = App(root)
+
+    def report(exc, val, tb):
+        # a windowed exe has no console: an error in a button handler would otherwise do nothing visible
+        import traceback
+        core.log(''.join(traceback.format_exception(exc, val, tb)).rstrip())
+        try:
+            app.refresh()
+        except Exception:
+            pass
+        app.say('Unexpected error: %s: %s (details in the log)' % (exc.__name__, val), ERR)
+    root.report_callback_exception = report
     root.mainloop()
 
 
