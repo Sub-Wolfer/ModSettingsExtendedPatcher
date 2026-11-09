@@ -21,7 +21,7 @@ import uw_map_patch as M  # noqa: E402
 import w3bundle     # noqa: E402
 import w3meta       # noqa: E402
 
-VERSION = '1.4.0'
+VERSION = '1.4.1'
 DEPOT = fml_patch.DEPOT
 MSE_DIR = 'mod00000_ModSettingsExtended'
 MSE_SCRIPT = os.path.join('content', 'scripts', 'local', 'FullModsList.ws')
@@ -177,6 +177,126 @@ def epic_install_dirs():
     return out
 
 
+def running_on_wine():
+    """True under Wine or Proton (Linux, Steam Deck): Wine's ntdll exports wine_get_version, Windows' doesn't."""
+    try:
+        import ctypes
+        return hasattr(ctypes.WinDLL('ntdll'), 'wine_get_version')
+    except Exception:
+        return False
+
+
+def _unix_to_wine(path, root):
+    """A Linux path from Steam's libraryfolders.vdf ("/home/deck/Games") as Wine shows it: Wine's Z: drive is the
+    Linux root folder by default."""
+    return os.path.join(root, *[x for x in path.split('/') if x])
+
+
+def wine_steam_dirs(root='Z:\\'):
+    """The Witcher 3 folders in the Linux Steam libraries, seen through Wine's Z: drive: native Steam
+    (~/.local/share/Steam, ~/.steam/steam), Flatpak Steam, and every library listed in their libraryfolders.vdf
+    (other drives, a Steam Deck's SD card). Only reads files."""
+    steams = []
+    homes = sorted(glob.glob(os.path.join(root, 'home', '*'))) + [os.path.join(root, 'root')]
+    for h in homes:
+        for rel in (('.local', 'share', 'Steam'), ('.steam', 'steam'), ('.steam', 'root'),
+                    ('.var', 'app', 'com.valvesoftware.Steam', '.local', 'share', 'Steam'),
+                    ('.var', 'app', 'com.valvesoftware.Steam', 'data', 'Steam')):
+            s = os.path.join(h, *rel)
+            if os.path.isdir(os.path.join(s, 'steamapps')):
+                steams.append(s)
+    libs = []
+    for s in steams:
+        libs.append(s)
+        vdf = os.path.join(s, 'steamapps', 'libraryfolders.vdf')
+        try:
+            with open(vdf, encoding='utf-8', errors='replace') as f:
+                paths = [re.sub(r'\\(.)', r'\1', m) for m in re.findall(r'"path"\s+"((?:[^"\\]|\\.)*)"', f.read())]
+            libs += [_unix_to_wine(m, root) for m in paths if m.startswith('/')]
+        except OSError:
+            pass
+    out, seen = [], set()
+    for l in libs:
+        g = os.path.join(l, 'steamapps', 'common', 'The Witcher 3')
+        k = os.path.normcase(os.path.realpath(g))
+        if k not in seen:
+            seen.add(k)
+            out.append(g)
+    return out
+
+
+def _json_install_paths(j):
+    """Every "install_path" / "installPath" value anywhere in a launcher's JSON."""
+    out = []
+    if isinstance(j, dict):
+        for k, v in j.items():
+            if k in ('install_path', 'installPath') and isinstance(v, str):
+                out.append(v)
+            else:
+                out += _json_install_paths(v)
+    elif isinstance(j, list):
+        for v in j:
+            out += _json_install_paths(v)
+    return out
+
+
+def _has_witcher3_exe(d):
+    return any(os.path.isfile(os.path.join(d, 'bin', x, 'witcher3.exe')) for x in ('x64_dx12', 'x64'))
+
+
+def wine_launcher_dirs(root='Z:\\'):
+    """The Witcher 3 folders from GOG and Epic on Linux, seen through Wine's Z: drive: Heroic's install lists (GOG and
+    Epic, native and Flatpak), the folders Heroic and Lutris install to by default (~/Games), and GOG / Epic installs
+    inside Wine prefixes (Lutris, Bottles, ~/.wine). Only folders with the game's own exe count. Only reads files."""
+    homes = [h for h in glob.glob(os.path.join(root, 'home', '*')) if os.path.isdir(h)] + [os.path.join(root, 'root')]
+    cands = []
+    for h in sorted(homes):
+        for cfg in (os.path.join(h, '.config', 'heroic'),
+                    os.path.join(h, '.var', 'app', 'com.heroicgameslauncher.hgl', 'config', 'heroic')):
+            for js in (('gog_store', 'installed.json'), ('legendaryConfig', 'legendary', 'installed.json'),
+                       ('..', 'legendary', 'installed.json')):          # standalone / older Legendary
+                try:
+                    with open(os.path.normpath(os.path.join(cfg, *js)), encoding='utf-8', errors='replace') as f:
+                        cands += [_unix_to_wine(p, root) for p in _json_install_paths(json.load(f)) if p.startswith('/')]
+                except (OSError, ValueError, RecursionError):
+                    pass
+        # Lutris: one .yml per game; game: exe (absolute, or inside prefix) -> the folder 3 levels above bin\x64*\
+        for ld in (os.path.join(h, '.local', 'share', 'lutris', 'games'), os.path.join(h, '.config', 'lutris', 'games'),
+                   os.path.join(h, '.var', 'app', 'net.lutris.Lutris', 'data', 'lutris', 'games')):
+            for y in glob.glob(os.path.join(glob.escape(ld), '*.yml')):
+                try:
+                    with open(y, encoding='utf-8', errors='replace') as f:
+                        txt = f.read()
+                except OSError:
+                    continue
+                val = lambda key: [m.strip().strip('\'"') for m in re.findall(r'^\s*%s:\s*(.+?)\s*$' % key, txt, re.M)]
+                pre = (val('prefix') or [''])[0]
+                for exe in val('exe'):
+                    full = exe if exe.startswith('/') else (pre.rstrip('/') + '/' + exe if pre.startswith('/') else '')
+                    parts = [x for x in full.split('/') if x]
+                    if len(parts) >= 4 and parts[-1].lower() == 'witcher3.exe' and parts[-3].lower() == 'bin':
+                        cands.append(_unix_to_wine('/' + '/'.join(parts[:-3]), root))
+        e = glob.escape(h)
+        prefixes = [os.path.join(e, 'Games', '*'), os.path.join(e, '.wine'),
+                    os.path.join(e, '.local', 'share', 'bottles', 'bottles', '*'),
+                    os.path.join(e, '.var', 'app', 'com.usebottles.bottles', 'data', 'bottles', 'bottles', '*')]
+        pats = [os.path.join(e, 'Games', '*'), os.path.join(e, 'Games', 'Heroic', '*')]
+        for pf in prefixes:
+            dc = os.path.join(pf, 'drive_c')
+            pats += [os.path.join(dc, 'GOG Games', '*'),
+                     os.path.join(dc, 'Program Files*', 'GOG Galaxy', 'Games', '*'),
+                     os.path.join(dc, 'Program Files*', 'Epic Games', '*')]
+        for p in pats:
+            cands += sorted(glob.glob(p))
+    out, seen = [], set()
+    for d in cands:
+        k = os.path.normcase(os.path.normpath(d))
+        if k not in seen and _has_witcher3_exe(d):
+            seen.add(k)
+            out.append(d)
+    return out
+
+
 def find_game_dir():
     here = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
     d = here
@@ -208,6 +328,15 @@ def find_game_dir():
     except ImportError:
         pass
     cands += epic_install_dirs()                         # Epic Games Store
+    if running_on_wine():                                # Linux / Steam Deck: Steam's own folders, through Z:
+        try:
+            cands += wine_steam_dirs()
+        except Exception:
+            log_exc()
+        try:
+            cands += wine_launcher_dirs()                # GOG / Epic: Heroic, Lutris, Bottles
+        except Exception:
+            log_exc()
     for c in cands:
         if is_game_dir(c):
             return os.path.normpath(c)
@@ -218,10 +347,29 @@ def game_running():
         # bytes, not text: tasklist writes in the console code page (German "ausgef\x81hrt" can't be decoded as cp1252)
         out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq witcher3.exe', '/NH'], capture_output=True,
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout or b''
-        return b'witcher3.exe' in out.lower()
+        if b'witcher3.exe' in out.lower():
+            return True
     except Exception:
         log_exc()
+    # Proton runs the game in its own Wine instance, which tasklist here can't see: look at Linux's own process list
+    return running_on_wine() and linux_process_running('witcher3.exe')
+
+
+def linux_process_running(name, root='Z:\\'):
+    """True if a Linux process's command line names the exe (read through Wine's Z: drive). Only reads files."""
+    want = name.lower().encode()
+    try:
+        pids = [p for p in os.listdir(os.path.join(root, 'proc')) if p.isdigit()]
+    except OSError:
         return False
+    for p in pids:
+        try:
+            with open(os.path.join(root, 'proc', p, 'cmdline'), 'rb') as f:
+                if want in f.read().lower():
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def mods_dir(game):
