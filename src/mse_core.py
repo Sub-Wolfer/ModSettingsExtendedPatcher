@@ -21,7 +21,7 @@ import uw_map_patch as M  # noqa: E402
 import w3bundle     # noqa: E402
 import w3meta       # noqa: E402
 
-VERSION = '1.4.1'
+VERSION = '1.4.2'
 DEPOT = fml_patch.DEPOT
 MSE_DIR = 'mod00000_ModSettingsExtended'
 MSE_SCRIPT = os.path.join('content', 'scripts', 'local', 'FullModsList.ws')

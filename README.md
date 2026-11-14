@@ -68,6 +68,7 @@ not byte-for-byte reproducible, so a rebuilt exe will have a different hash.
 
 Released exes (on Nexus Mods and GitHub Releases), SHA-256:
 
+- 1.4.2 (for Mod Settings Extended 1.5.0 and newer; the Alt-Tab fix from Mod Settings Extended 1.5.1): `bf7009219f507598b0029b50ab2fb2890c44c5a62bc9ff0f11e5bb312e24928d`
 - 1.4.1 (for Mod Settings Extended 1.5.0; finds the game on Linux / Steam Deck): `4e9a04baf51eaae3822b15d1e995fb633e1490cba9b52b0fd90fd768a215daea`
 - 1.4.0 (for Mod Settings Extended 1.5.0): `a2d2b8b25697f6f931d5a12615bc9db223a83c3c448a755660f23bba360c403b`
 - 1.3.0 (for Mod Settings Extended 1.4.0): `a6459e16f01242a072fad8e1330240f5d73256e14254b29760dbf2774d08cf3a`

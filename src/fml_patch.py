@@ -1856,8 +1856,28 @@ def patch_abc(abc):
     # letters and digits type a search (E only once
     # one is typed: before that E opens the entry), Backspace deletes the last one, Delete clears it, Enter opens the
     # entry while a search is typed. 0 = not ours, 1 = handled, 2 = open the entry.   2 details, 3 code, 5 value
+    # Each key acts on its release, but only after the list saw that key's press: Alt-Tab (Steam Input switching between
+    # pad and keyboard) sends lone releases that used to favorite / hide rows by themselves. fmlPrs = {code: true}
+    # while a key is down, per raw key code (so fast typing in the search still works). prs runs at the top of fmlKey,
+    # before anything changes local 3: a press records it; every release takes it out into local 6 (also releases
+    # that go elsewhere, so nothing stays recorded). up() acts only on a release whose press was recorded.
+    s_dn = string('keyDown')
+    fmlPrs = nm('fmlPrs')
+    M.add_slot(c, ci, fmlPrs, 0, 0, 0)
+    prs = [
+        L('pushfalse'), L('setlocal', 6),
+        L('getlocal0'), L('getproperty', fmlPrs), L('iftrue', 'PR1'),
+        L('getlocal0'), L('newobject', 0), L('initproperty', fmlPrs),
+        ('PR1', 'getlocal', 5), L('pushstring', s_dn), L('ifne', 'PR2'),
+        L('getlocal0'), L('getproperty', fmlPrs), L('getlocal3'), L('pushtrue'), L('setproperty', late),
+        L('jump', 'PR9'),
+        ('PR2', 'getlocal', 5), L('pushstring', s_up), L('ifne', 'PR9'),
+        L('getlocal0'), L('getproperty', fmlPrs), L('getlocal3'), L('getproperty', late), L('convert_b'), L('setlocal', 6),
+        L('getlocal0'), L('getproperty', fmlPrs), L('getlocal3'), L('deleteproperty', late), L('pop'),
+        ('PR9', 'nop')]
     up = lambda miss: [L('getlocal1'), L('pushtrue'), L('setproperty', handled),
-                       L('getlocal', 5), L('pushstring', s_up), L('ifne', miss)]
+                       L('getlocal', 5), L('pushstring', s_up), L('ifne', miss),
+                       L('getlocal', 6), L('iffalse', miss)]
     # fmlSortCode(): the stored sort code: the Mods list's fmlSort, + OLD_SORTS while its headers are off (By category
     # CAT_CODE, + 1), + 8 sub-menus Recently opened, + 16 sub-menus' headers off.
     #   1 Mods sort, 2 Mods headers off, 3 sub sort, 4 sub headers off, 5 code
@@ -1892,6 +1912,7 @@ def patch_abc(abc):
         L('getlocal2'), L('iffalse', 'NO'),
         L('getlocal2'), L('getproperty', codeP), L('convert_i'), L('setlocal3'),
         L('getlocal2'), L('getproperty', valueP), L('coerce_a'), L('setlocal', 5),
+        *prs,
         # renaming: every key goes to fmlRenKey (handled; nothing else in the menu sees it)
         L('getlocal0'), L('getproperty', fmlRen), L('iffalse', 'RN0'),
         L('getlocal0'), L('getproperty', fmlHMode), L('iffalse', 'RNK'),
@@ -4228,7 +4249,7 @@ def patch_abc(abc):
     M.add_method(c, ci, m_refresh, [], void, refresh, 5, 1, lbody, 'fx_')
     M.add_method(c, ci, m_tell, [any_t, any_t], void, tell, 8, 4, lbody, 'ft2_')
     M.add_method(c, ci, m_parse, [any_t], void, parse, 8, 10, lbody, 'fq_')
-    M.add_method(c, ci, m_key, [any_t], any_t, key, 8, 6, lbody, 'fk_')
+    M.add_method(c, ci, m_key, [any_t], any_t, key, 8, 7, lbody, 'fk_')
     M.add_method(c, ci, m_ui, [], void, ui, 12, 12, lbody, 'fi_')
     M.add_method(c, ci, m_frame, [any_t], void, frame, 6, 6, lbody, 'fz_')
 
