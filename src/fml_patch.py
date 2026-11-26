@@ -23,8 +23,8 @@ Changes (all inside catch-all guarded methods; lists of 10 or fewer entries keep
   * Options > Mods sorted A to Z: a gold letter header row before each group (fmlHdrs in fmlView, drawn by
     fmlHdrDraw from updateText), never selectable (fmlHdrSkip from W3ScrollingList.selectedIndex set, Up / Down in
     fmlNav); RT / Space turns them on or off, stored with the sort (code + 3 = off).
-  * Options > Mods sorted By category: grouped by the category the script sets on each row (fmlKind), A to Z
-    inside a group, with a gold category header row before each group (on / off as in A to Z; stored code 6 = on,
+  * Options > Mods sorted By category: grouped by the category the script sets on each row (fmlKind), the groups
+    A to Z by the category's shown name (fmlCatLess; Menu Organizer categories first), A to Z inside a group, with a gold category header row before each group (on / off as in A to Z; stored code 6 = on,
     7 = off); X / Insert moves the selected mod to the next category (fmlCatNext), told to the script ("cat").
     Y / Home twice within RESET_MS (fmlCatReset; the first press arms it and relabels the prompt) puts every mod of
     the list shown (from the top level also those in Menu Organizer categories, fmlRstRow) back in the category the
@@ -1168,6 +1168,10 @@ def patch_abc(abc):
     M.add_slot(c, ci, fmlPCat, 0, 0, 0)
     M.add_slot(c, ci, fmlCPrompt, t_bool, 0, 0)
     m_kind, m_cname, m_cnext = nm('fmlKindOf'), nm('fmlCatName'), nm('fmlCatNext')
+    # categories A to Z: fmlCatLess(a, b) orders two categories, fmlCatKey(i) is category i's fmlColl sort key, made
+    # on a small object per category kept in fmlCK (fmlColl only redoes it when the name or language changed)
+    m_cless, m_ckey, fmlCK = nm('fmlCatLess'), nm('fmlCatKey'), nm('fmlCK')
+    M.add_slot(c, ci, fmlCK, 0, 0, 0)
     # Reset categories (Y / Home, By category only): fmlGuess = the script's guess on a Mods row (newer scripts).
     # fmlRArmT: getTimer() of the first press (0 = not armed). fmlRPrompt: the prompt is shown, fmlRShown: with the
     # armed label. fmlPendRst: tell the script "catreset" next frame
@@ -1673,7 +1677,7 @@ def patch_abc(abc):
         L('getlocal0'), L('getlocal1'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal3'),
         L('getlocal0'), L('getlocal2'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
         L('getlocal3'), L('getlocal', 4), L('ifeq', 'F0'),
-        L('getlocal3'), L('getlocal', 4), L('lessthan'), L('returnvalue'),
+        L('getlocal0'), L('getlocal3'), L('getlocal', 4), L('callproperty', m_cless, 2), L('returnvalue'),
         ('F0', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('pushbyte', 1), L('ifne', 'F0O'),
         L('getlocal0'), L('getproperty', fmlFTopN), L('iffalse', 'FQ'),
         L('jump', 'F0A'),
@@ -1684,12 +1688,12 @@ def patch_abc(abc):
         L('getlocal1'), L('getproperty', fmlFavP), L('convert_b'), L('returnvalue'),
         ('FQ', 'getlocal0'), L('getproperty', fmlSort), L('convert_i'), L('setlocal', 5),
         L('getlocal', 5), L('pushbyte', 1), L('iflt', 'NAME'),
-        # 3 = by category: category order (fmlKindOf), A to Z inside a category
+        # 3 = by category: categories A to Z by name (fmlCatLess), A to Z inside a category
         L('getlocal', 5), L('pushbyte', CAT_SORT), L('ifne', 'STAMP'),
         L('getlocal0'), L('getlocal1'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal3'),
         L('getlocal0'), L('getlocal2'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
         L('getlocal3'), L('getlocal', 4), L('ifeq', 'NAME'),
-        L('getlocal3'), L('getlocal', 4), L('lessthan'), L('returnvalue'),
+        L('getlocal0'), L('getlocal3'), L('getlocal', 4), L('callproperty', m_cless, 2), L('returnvalue'),
         # 1 = newest first (first seen), 2 = recently opened
         ('STAMP', 'getlocal0'), L('getproperty', fmlSeen), L('getlocal', 5), L('pushbyte', 1), L('ifeq', 'MAP'),
         L('pop'), L('getlocal0'), L('getproperty', fmlOpen),
@@ -2373,12 +2377,14 @@ def patch_abc(abc):
     # language; "#" for digits and symbols). By category
     # key = the category name (fmlCatName); a Menu Organizer category (-1, sorted first) has "" and gets no header.
     # Other sorts / off: out itself.
-    #   2 rows, 3 i, 4 entry, 5 last key, 6 key, 7 first character
+    # Empty categories the user added get their header at their A to Z place (fmlCatLess) among the headers.
+    #   2 rows, 3 i, 4 entry, 5 last key, 6 key, 7 first character / category, 8 last category, 9 j
     hdrs = [
         *hdr_gate('NO', 'HG'),
         L('getlocal0'), L('getproperty', fmlHdrOff), L('iftrue', 'NO'),
         L('newarray', 0), L('setlocal2'),
         L('pushstring', s_empty), L('coerce_a'), L('setlocal', 5),
+        L('pushbyte', 255), L('setlocal', 8),
         L('pushbyte', 0), L('setlocal3'),
         ('L0', 'label'),
         L('getlocal3'), L('getlocal1'), L('getproperty', length), L('ifnlt', 'L9'),
@@ -2396,8 +2402,10 @@ def patch_abc(abc):
         ('LT', 'getlocal', 4), L('getproperty', fmlFavP), L('convert_b'), L('iffalse', 'LU'),
         *nlabel(FAVS_IDX, s_favs, 'LV'), L('coerce_a'), L('setlocal', 6),
         L('pushbyte', 255), L('convert_i'), L('setlocal', 7),
-        ('LU', 'getlocal', 6), L('getlocal', 5), L('ifeq', 'L1'),
-        L('getlocal', 6), L('setlocal', 5),
+        ('LU', 'getlocal', 6), L('getlocal', 5), L('ifne', 'LN'),
+        L('getlocal', 7), L('getlocal', 8), L('ifeq', 'L1'),
+        ('LN', 'getlocal', 6), L('setlocal', 5),
+        L('getlocal', 7), L('setlocal', 8),
         L('getlocal', 6), L('pushstring', s_empty), L('ifeq', 'L1'),
         L('getlocal2'),
         L('pushstring', s_idk), L('pushstring', s_empty),
@@ -2424,14 +2432,23 @@ def patch_abc(abc):
         ('E2', 'pop'),
         ('E3', 'inclocal_i', 3), L('jump', 'E1'),
         ('EP', 'getlocal0'), L('getlocal', 7), L('callproperty', m_cname, 1), L('convert_s'), L('coerce_a'), L('setlocal', 6),
-        L('getlocal2'),
+        L('pushbyte', 0), L('setlocal', 9),
+        ('P0', 'label'),
+        L('getlocal', 9), L('getlocal2'), L('getproperty', length), L('ifnlt', 'PE'),
+        L('getlocal2'), L('getlocal', 9), L('getproperty', late), L('getproperty', fmlHdrP), L('convert_b'), L('iffalse', 'P1'),
+        L('getlocal2'), L('getlocal', 9), L('getproperty', late), L('getproperty', fmlHCatP), L('convert_i'), L('setlocal3'),
+        L('getlocal3'), L('pushbyte', 0), L('iflt', 'P1'),
+        L('getlocal3'), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifge', 'P1'),
+        L('getlocal0'), L('getlocal', 7), L('getlocal3'), L('callproperty', m_cless, 2), L('convert_b'), L('iftrue', 'PE'),
+        ('P1', 'inclocal_i', 9), L('jump', 'P0'),
+        ('PE', 'getlocal2'), L('getlocal', 9), L('pushbyte', 0),
         L('pushstring', s_idk), L('pushstring', s_empty),
         L('pushstring', s_labk), L('pushstring', s_nbsp), L('getlocal', 6), L('add'),
         L('pushstring', s_typek), L('pushbyte', HDR_TYPE),
         L('pushstring', s_unav), L('pushtrue'),
         L('pushstring', s_fmlhdr), L('getlocal', 6),
         L('pushstring', s_hcat), L('getlocal', 7),
-        L('newobject', 6), L('callpropvoid', pushM, 1),
+        L('newobject', 6), L('callpropvoid', spliceM, 3),
         ('E9', 'inclocal_i', 7), L('jump', 'E0'),
         ('RET', 'getlocal2'), L('returnvalue'),
         ('NO', 'getlocal1'), L('returnvalue'),
@@ -2830,6 +2847,37 @@ def patch_abc(abc):
         ('NONE', 'pushstring', s_empty), L('returnvalue'),
     ]
 
+    # fmlCatLess(a, b):Boolean - category a's group goes before category b's (a != b): a Menu Organizer category (-1)
+    # first, then A to Z by the shown name (fmlCatKey), the same name by index
+    cless = [
+        L('getlocal1'), L('convert_i'), L('setlocal1'),
+        L('getlocal2'), L('convert_i'), L('setlocal2'),
+        L('getlocal1'), L('pushbyte', 0), L('iflt', 'IDX'),
+        L('getlocal2'), L('pushbyte', 0), L('iflt', 'IDX'),
+        L('getlocal0'), L('getlocal1'), L('callproperty', m_ckey, 1), L('convert_s'), L('coerce_a'), L('setlocal3'),
+        L('getlocal0'), L('getlocal2'), L('callproperty', m_ckey, 1), L('convert_s'), L('coerce_a'), L('setlocal', 4),
+        L('getlocal3'), L('getlocal', 4), L('ifeq', 'IDX'),
+        L('getlocal3'), L('getlocal', 4), L('lessthan'), L('returnvalue'),
+        ('IDX', 'getlocal1'), L('getlocal2'), L('lessthan'), L('returnvalue'),
+    ]
+
+    # fmlCatKey(i):String - category i's sort key: fmlColl on {label: fmlCatName(i)}, kept in fmlCK[i]
+    #   2 cache, 3 entry
+    ckey = [
+        L('getlocal0'), L('getproperty', fmlCK), L('coerce_a'), L('setlocal2'),
+        L('getlocal2'), L('iftrue', 'H'),
+        L('getlocal0'), L('newobject', 0), L('initproperty', fmlCK),
+        L('getlocal0'), L('getproperty', fmlCK), L('coerce_a'), L('setlocal2'),
+        ('H', 'getlocal2'), L('getlocal1'), L('convert_i'), L('getproperty', late), L('coerce_a'), L('setlocal3'),
+        L('getlocal3'), L('iftrue', 'R'),
+        L('newobject', 0), L('coerce_a'), L('setlocal3'),
+        L('getlocal2'), L('getlocal1'), L('convert_i'), L('getlocal3'), L('setproperty', late),
+        ('R', 'getlocal3'), L('getlocal0'), L('getlocal1'), L('callproperty', m_cname, 1), L('convert_s'),
+        L('setproperty', lab),
+        L('getlocal0'), L('getlocal3'), L('callpropvoid', m_coll, 1),
+        L('getlocal3'), L('getproperty', fmlSKP), L('convert_s'), L('returnvalue'),
+    ]
+
     # fmlNumCats():int - the nine and the ones the user added   1 names
     ncat = [
         L('getlocal0'), L('getproperty', fmlNames), L('coerce_a'), L('setlocal1'),
@@ -2939,7 +2987,8 @@ def patch_abc(abc):
     # fmlCatNext(): X / Insert in By category - the selected mod to the next category (after Misc: the first), on
     # the row itself (the same object as in fmlAll, so later sorts keep it), the list shown again with it still
     # selected, the script told next frame ("cat", "id:kind"). Not a header, Back or a Menu Organizer category.
-    #   1 sel, 2 dp, 3 row, 4 kind
+    # The next category is the next one in the order shown (fmlCatLess); after the last one, the first.
+    #   1 sel, 2 dp, 3 row, 4 kind, 5 k, 6 next, 7 first
     cnext = [
         *lst, L('getproperty', selIdx), L('convert_i'), L('setlocal1'),
         L('getlocal1'), L('pushbyte', 0), L('iflt', 'END'),
@@ -2955,7 +3004,24 @@ def patch_abc(abc):
         L('getlocal3'), L('getproperty', fmlFavP), L('convert_b'), L('iftrue', 'END'),
         ('KOK', 'getlocal0'), L('getlocal3'), L('callproperty', m_kind, 1), L('convert_i'), L('setlocal', 4),
         L('getlocal', 4), L('pushbyte', 0), L('iflt', 'END'),
-        L('getlocal', 4), L('increment_i'), L('getlocal0'), L('callproperty', m_ncat, 0), L('modulo'), L('convert_i'), L('setlocal', 4),
+        L('pushbyte', 0), L('decrement_i'), L('setlocal', 6),
+        L('pushbyte', 0), L('decrement_i'), L('setlocal', 7),
+        L('pushbyte', 0), L('setlocal', 5),
+        ('N0', 'label'),
+        L('getlocal', 5), L('getlocal0'), L('callproperty', m_ncat, 0), L('ifnlt', 'N9'),
+        L('getlocal', 5), L('getlocal', 4), L('ifeq', 'N3'),
+        L('getlocal', 7), L('pushbyte', 0), L('iflt', 'NF'),
+        L('getlocal0'), L('getlocal', 5), L('getlocal', 7), L('callproperty', m_cless, 2), L('convert_b'), L('iffalse', 'N2'),
+        ('NF', 'getlocal', 5), L('setlocal', 7),
+        ('N2', 'getlocal0'), L('getlocal', 4), L('getlocal', 5), L('callproperty', m_cless, 2), L('convert_b'), L('iffalse', 'N3'),
+        L('getlocal', 6), L('pushbyte', 0), L('iflt', 'NB'),
+        L('getlocal0'), L('getlocal', 5), L('getlocal', 6), L('callproperty', m_cless, 2), L('convert_b'), L('iffalse', 'N3'),
+        ('NB', 'getlocal', 5), L('setlocal', 6),
+        ('N3', 'inclocal_i', 5), L('jump', 'N0'),
+        ('N9', 'getlocal', 6), L('pushbyte', 0), L('ifge', 'NS'),
+        L('getlocal', 7), L('setlocal', 6),
+        ('NS', 'getlocal', 6), L('pushbyte', 0), L('iflt', 'END'),
+        L('getlocal', 6), L('setlocal', 4),
         L('getlocal3'), L('getlocal', 4), L('setproperty', fmlKindP),
         L('getlocal0'), L('getlocal3'), L('getproperty', idP), L('convert_s'), L('initproperty', fmlKeepId),
         L('getlocal0'), L('getlocal3'), L('getproperty', idP), L('convert_s'), L('pushstring', s_colon), L('add'),
@@ -4226,14 +4292,16 @@ def patch_abc(abc):
     M.add_method(c, ci, m_rrow, [any_t, any_t], any_t, rrow, 6, 5, lbody, 'frr_')
     M.add_method(c, ci, m_cname, [any_t], any_t, cname, 6, 3, lbody, 'fcn_')
     M.add_method(c, ci, m_ncat, [], any_t, ncat, 5, 2, lbody, 'fnc_')
+    M.add_method(c, ci, m_cless, [any_t, any_t], any_t, cless, 4, 5, lbody, 'fcl_')
+    M.add_method(c, ci, m_ckey, [any_t], any_t, ckey, 5, 4, lbody, 'fck_')
     M.add_method(c, ci, m_addon, [], any_t, addon, 4, 1, lbody, 'fao_')
     M.add_method(c, ci, m_cdel, [any_t, any_t, any_t], void, cdel, 6, 7, lbody, 'fcd_')
     M.add_method(c, ci, m_cdall, [any_t], void, cdall, 6, 7, lbody, 'fca_')
     M.add_method(c, ci, m_hhov, [any_t], void, hhov, 8, 8, lbody, 'fhh_')
-    M.add_method(c, ci, m_cnext, [], void, cnext, 6, 5, lbody, 'fcx_')
+    M.add_method(c, ci, m_cnext, [], void, cnext, 6, 8, lbody, 'fcx_')
     M.add_method(c, ci, m_ishdr, [any_t], any_t, ishdr, 4, 4, lbody, 'fhi_')
     M.add_method(c, ci, m_hskip, [any_t, any_t], any_t, hskip, 4, 5, lbody, 'fhs_')
-    M.add_method(c, ci, m_hdrs, [any_t], any_t, hdrs, 19, 8, lbody, 'fhr_')
+    M.add_method(c, ci, m_hdrs, [any_t], any_t, hdrs, 21, 10, lbody, 'fhr_')
     M.add_method(c, ci, m_hdraw, [any_t], any_t, hdraw, 12, 12, lbody, 'fhd_')
     M.add_method(c, ci, m_htog, [], void, htog, 6, 4, lbody, 'fht_')
     M.add_method(c, ci, m_gaps, [any_t, any_t], void, gaps, 16, 16, lbody, 'fgp_')
